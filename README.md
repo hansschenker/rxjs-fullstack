@@ -11,6 +11,8 @@ The framework is deliberately small. Existing web-community technologies keep th
 - **Bun** — reference runtime for the first implementation.
 
 The planned framework capabilities are file-based routing, SSR, SSG, and Query/Cache.
+Routing and route data resolution are provided by the sibling `rxjs-router`
+package.
 
 ## First vertical slice: M01–M04
 
@@ -47,6 +49,17 @@ HTML response
 ### M04 — Hono + Bun
 
 Hono owns HTTP routing. Bun is only the reference runtime. The Hono application is kept separate from the Bun entry point so another runtime can later adapt the same Web-API application.
+
+### M05 — rxjs-router integration
+
+Route definitions live in `src/routes.tsx` and are shared by the server and the
+browser. The server uses `resolveRequest()` before passing a resolved JSX view to
+the pure HTML renderer. The browser uses `createBrowserHistory()` and
+`router.state$` as the live application view source for the DOM renderer.
+
+Route modules live under `src/routes/`. Each page module exports a route object,
+and `src/routes.tsx` is the manual barrel that assembles the route tree. This
+keeps route files small today and leaves room for a later file-route generator.
 
 ## Run
 

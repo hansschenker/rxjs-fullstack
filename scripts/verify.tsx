@@ -50,7 +50,12 @@ const response = await app.request('/');
 assertEqual(response.status, 200, 'M04: root route should return HTTP 200.');
 const body = await response.text();
 assert(body.includes('<h1>RxJS Fullstack</h1>'), 'M04: root route should return SSR HTML.');
-assert(body.includes('M01–M04 vertical slice'), 'M04: SSR route should render route data.');
+assert(body.includes('M01-M05 vertical slice with rxjs-router'), 'M04: SSR route should render route data.');
+
+const counterResponse = await app.request('/counter');
+assertEqual(counterResponse.status, 200, 'M05: counter route should return HTTP 200.');
+const counterBody = await counterResponse.text();
+assert(counterBody.includes('<h1>RxJS Fullstack Counter</h1>'), 'M05: router should render nested counter route.');
 
 const health = await app.request('/health');
 assertEqual(health.status, 200, 'M04: health route should return HTTP 200.');
