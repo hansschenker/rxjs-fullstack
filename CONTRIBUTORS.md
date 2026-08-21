@@ -16,9 +16,10 @@ ChatGPT contributes substantially to architecture refinement, implementation, Ty
 
 ### Model attribution
 
-- **M01–M05:** GPT-5.6 Sol
+- **Current documented model:** GPT-5.6 Sol
+- Earlier project contributions are attributed to ChatGPT unless an exact model was explicitly recorded at the time.
 
-Model attribution is recorded by milestone so the contributor history remains accurate if later work uses a different ChatGPT model.
+This keeps the contributor history precise without retroactively assigning a model version that was not independently recorded.
 
 ## Attribution note
 
