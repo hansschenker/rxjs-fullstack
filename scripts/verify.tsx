@@ -1,5 +1,6 @@
 import { defer, firstValueFrom, map, of } from 'rxjs';
 
+import { helloRoute } from '../src/examples/routes';
 import { app } from '../src/server/app';
 import { Fragment, jsx } from '../src/jsx/runtime';
 import { renderToString } from '../src/render/html';
@@ -63,6 +64,18 @@ const typedParams: RouteParams<'/teams/:teamId/users/:userId'> = {
 };
 assertEqual(typedParams.teamId, 'rxjs', 'M05: route path should infer teamId.');
 assertEqual(typedParams.userId, '42', 'M05: route path should infer userId.');
+
+assertEqual(
+  helloRoute.href({ name: 'Erik Meijer' }),
+  '/hello/Erik%20Meijer',
+  'M05: route href should require and encode path-derived params.',
+);
+
+// These are compile-time assertions: tsc must report an error on each call.
+// @ts-expect-error M05: href requires the path-derived "name" parameter.
+helloRoute.href({});
+// @ts-expect-error M05: href rejects unrelated parameter names.
+helloRoute.href({ id: 'Erik' });
 
 const hello = await app.request('/hello/Erik');
 assertEqual(hello.status, 200, 'M05: parameterized route should return HTTP 200.');
