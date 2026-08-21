@@ -1,0 +1,21 @@
+{
+  "name": "rxjs-fullstack",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot src/server/bun.ts",
+    "start": "bun run src/server/bun.ts",
+    "typecheck": "tsc --noEmit",
+    "verify": "bun run scripts/verify.tsx",
+    "build:client": "bun build src/examples/counter-client.tsx --outdir dist/client --target browser",
+    "check": "bun run typecheck && bun run verify && bun run build:client"
+  },
+  "dependencies": {
+    "hono": "^4.0.0",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}
