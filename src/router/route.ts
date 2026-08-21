@@ -31,13 +31,37 @@ export interface PageRouteConfig<Path extends string, Model> {
 export interface PageRoute<Path extends string, Model>
   extends PageRouteConfig<Path, Model> {
   readonly path: Path;
+  readonly href: (params: RouteParams<Path>) => string;
 }
+
+export const buildRoutePath = <const Path extends string>(
+  path: Path,
+  params: RouteParams<Path>,
+): string =>
+  path
+    .split('/')
+    .map((segment) => {
+      if (!segment.startsWith(':')) {
+        return segment;
+      }
+
+      const paramName = segment.slice(1);
+      const value = (params as Readonly<Record<string, string>>)[paramName];
+
+      if (value === undefined) {
+        throw new TypeError(`Missing route parameter "${paramName}" for path "${path}".`);
+      }
+
+      return encodeURIComponent(value);
+    })
+    .join('/');
 
 export const definePageRoute =
   <const Path extends string>(path: Path) =>
   <Model>(config: PageRouteConfig<Path, Model>): PageRoute<Path, Model> => ({
     path,
     ...config,
+    href: (params) => buildRoutePath(path, params),
   });
 
 const resolveTitle = <Model>(
