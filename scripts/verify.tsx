@@ -1,8 +1,10 @@
 import { defer, firstValueFrom, map, of } from 'rxjs';
 
+import { helloRoute } from '../src/examples/routes';
 import { app } from '../src/server/app';
 import { Fragment, jsx } from '../src/jsx/runtime';
 import { renderToString } from '../src/render/html';
+import type { RouteParams } from '../src/router/route';
 
 const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
@@ -47,13 +49,38 @@ assert(
 );
 
 const response = await app.request('/');
-assertEqual(response.status, 200, 'M04: root route should return HTTP 200.');
+assertEqual(response.status, 200, 'M04/M05: root route should return HTTP 200.');
 const body = await response.text();
-assert(body.includes('<h1>RxJS Fullstack</h1>'), 'M04: root route should return SSR HTML.');
-assert(body.includes('M01–M04 vertical slice'), 'M04: SSR route should render route data.');
+assert(body.includes('<h1>RxJS Fullstack</h1>'), 'M04/M05: root route should return SSR HTML.');
+assert(body.includes('M05 — strongly typed routing'), 'M05: root route should render typed route data.');
 
 const health = await app.request('/health');
 assertEqual(health.status, 200, 'M04: health route should return HTTP 200.');
 assertEqual(await health.text(), '{"ok":true}', 'M04: health route should return JSON.');
 
-console.log('M01-M04 verification passed.');
+const typedParams: RouteParams<'/teams/:teamId/users/:userId'> = {
+  teamId: 'rxjs',
+  userId: '42',
+};
+assertEqual(typedParams.teamId, 'rxjs', 'M05: route path should infer teamId.');
+assertEqual(typedParams.userId, '42', 'M05: route path should infer userId.');
+
+assertEqual(
+  helloRoute.href({ name: 'Erik Meijer' }),
+  '/hello/Erik%20Meijer',
+  'M05: route href should require and encode path-derived params.',
+);
+
+// These are compile-time assertions: tsc must report an error on each call.
+// @ts-expect-error M05: href requires the path-derived "name" parameter.
+helloRoute.href({});
+// @ts-expect-error M05: href rejects unrelated parameter names.
+helloRoute.href({ id: 'Erik' });
+
+const hello = await app.request('/hello/Erik');
+assertEqual(hello.status, 200, 'M05: parameterized route should return HTTP 200.');
+const helloBody = await hello.text();
+assert(helloBody.includes('<h1>Hello Erik</h1>'), 'M05: typed route params should flow into the loader model.');
+assert(helloBody.includes('<title>Hello Erik</title>'), 'M05: typed loader model should flow into route metadata.');
+
+console.log('M01-M05 verification passed.');
