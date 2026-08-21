@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./assets/rxjs-fullstack-logo.webp" alt="RxJS Fullstack logo" width="360" />
+</p>
+
 # RxJS Fullstack
 
 `rxjs-fullstack` is an experiment in a minimal fullstack web framework whose application execution model is RxJS.
