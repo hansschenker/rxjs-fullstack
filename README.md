@@ -54,7 +54,7 @@ Hono owns HTTP routing. Bun is only the reference runtime. The Hono application 
 
 ChatGPT has been the primary AI implementation collaborator for the project, contributing substantially to architecture refinement, TypeScript and RxJS implementation, tests, documentation, and repository workflow while the project direction and architectural goals are defined and reviewed by hansschenker.
 
-The M01–M05 work was developed with **ChatGPT using GPT-5.6 Sol**. Model attribution is recorded by milestone so future work can remain accurate if a different model is used later.
+The current documented ChatGPT model is **GPT-5.6 Sol**. Earlier project work remains attributed to ChatGPT unless an exact model was explicitly recorded at the time; this avoids retroactively assigning a model version that was not independently recorded.
 
 See [`CONTRIBUTORS.md`](./CONTRIBUTORS.md) for the project contributor list.
 
