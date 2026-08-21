@@ -7,7 +7,7 @@ import {
   of,
   startWith,
 } from 'rxjs';
-import { QueryClient } from '@netxpert/rxjs-query';
+import { QueryClient } from '../query';
 
 import { Fragment, jsx, type ViewChild } from '../jsx/runtime';
 import { createTodo, todosQuery, type Todo } from '../queries/todos';

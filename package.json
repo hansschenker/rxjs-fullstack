@@ -14,7 +14,6 @@
     "check": "bun run typecheck && bun run verify && bun run build:client && bun run build:todos"
   },
   "dependencies": {
-    "@netxpert/rxjs-query": "file:../rxjs-query/packages/core/netxpert-rxjs-query-0.1.0.tgz",
     "hono": "4.13.3",
     "rxjs": "7.8.2",
     "rxjs-router": "file:../rxjs-router"

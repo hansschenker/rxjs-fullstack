@@ -1,4 +1,4 @@
-import { queryOptions } from '@netxpert/rxjs-query';
+import { queryOptions } from '../query';
 
 export interface Todo {
   readonly id: number;
