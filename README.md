@@ -48,6 +48,16 @@ HTML response
 
 Hono owns HTTP routing. Bun is only the reference runtime. The Hono application is kept separate from the Bun entry point so another runtime can later adapt the same Web-API application.
 
+## Development collaboration
+
+`rxjs-fullstack` is being developed collaboratively by **hansschenker** and **ChatGPT by OpenAI**.
+
+ChatGPT has been the primary AI implementation collaborator for the project, contributing substantially to architecture refinement, TypeScript and RxJS implementation, tests, documentation, and repository workflow while the project direction and architectural goals are defined and reviewed by hansschenker.
+
+The M01–M05 work was developed with **ChatGPT using GPT-5.6 Sol**. Model attribution is recorded by milestone so future work can remain accurate if a different model is used later.
+
+See [`CONTRIBUTORS.md`](./CONTRIBUTORS.md) for the project contributor list.
+
 ## Run
 
 ```sh
