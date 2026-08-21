@@ -1,8 +1,10 @@
 import { defer, firstValueFrom, map, of } from 'rxjs';
 
+import { helloRoute } from '../src/examples/routes';
 import { app } from '../src/server/app';
 import { Fragment, jsx } from '../src/jsx/runtime';
 import { renderToString } from '../src/render/html';
+import type { RouteParams } from '../src/router/route';
 
 const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
@@ -47,7 +49,7 @@ assert(
 );
 
 const response = await app.request('/');
-assertEqual(response.status, 200, 'M04: root route should return HTTP 200.');
+assertEqual(response.status, 200, 'M04/M05: root route should return HTTP 200.');
 const body = await response.text();
 assert(body.includes('<h1>RxJS Fullstack</h1>'), 'M04: root route should return SSR HTML.');
 assert(body.includes('M01-M05 vertical slice with rxjs-router'), 'M04: SSR route should render route data.');
@@ -61,4 +63,47 @@ const health = await app.request('/health');
 assertEqual(health.status, 200, 'M04: health route should return HTTP 200.');
 assertEqual(await health.text(), '{"ok":true}', 'M04: health route should return JSON.');
 
-console.log('M01-M04 verification passed.');
+const typedParams: RouteParams<'/teams/:teamId/users/:userId'> = {
+  teamId: 'rxjs',
+  userId: '42',
+};
+assertEqual(typedParams.teamId, 'rxjs', 'M05: route path should infer teamId.');
+assertEqual(typedParams.userId, '42', 'M05: route path should infer userId.');
+
+assertEqual(
+  helloRoute.href({ name: 'Erik Meijer' }),
+  '/hello/Erik%20Meijer',
+  'M05: route href should require and encode path-derived params.',
+);
+
+// These are compile-time assertions (tsc must report an error on each call)
+// AND runtime assertions: href throws when the path param is missing.
+let hrefMissingParamRejected = false;
+try {
+  // @ts-expect-error M05: href requires the path-derived "name" parameter.
+  helloRoute.href({});
+} catch {
+  hrefMissingParamRejected = true;
+}
+assert(hrefMissingParamRejected, 'M05: href should throw when a path param is missing.');
+
+let hrefWrongParamRejected = false;
+try {
+  // @ts-expect-error M05: href rejects unrelated parameter names.
+  helloRoute.href({ id: 'Erik' });
+} catch {
+  hrefWrongParamRejected = true;
+}
+assert(hrefWrongParamRejected, 'M05: href should throw for unrelated parameter names.');
+
+const todosResponse = await app.request('/todos');
+assertEqual(todosResponse.status, 200, 'M05: todos route should return HTTP 200.');
+const todosBody = await todosResponse.text();
+assert(todosBody.includes('<h1>RxJS Fullstack Todos</h1>'), 'M05: todos route should render SSR HTML.');
+
+const todosApi = await app.request('/api/todos');
+assertEqual(todosApi.status, 200, 'M05: todos API should return HTTP 200.');
+const todosJson = (await todosApi.json()) as ReadonlyArray<{ readonly id: number }>;
+assert(Array.isArray(todosJson) && todosJson.length > 0, 'M05: todos API should return seeded todos.');
+
+console.log('M01-M05 verification passed.');
