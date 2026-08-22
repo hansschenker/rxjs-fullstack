@@ -95,6 +95,29 @@ assert(
   'M12: duplicate registration should surface the typed already-registered result.',
 );
 
+let unknownIdentityKdfExecutions = 0;
+const unknownIdentityService = createAuthService({
+  repository: createMemoryAuthRepository(),
+  passwordHasher: {
+    hash: async (password) => {
+      unknownIdentityKdfExecutions += 1;
+      return testHasher.hash(password);
+    },
+    verify: (password, encodedHash) =>
+      testHasher.verify(password, encodedHash),
+  },
+});
+try {
+  await firstValueFrom(unknownIdentityService.login$(credentials));
+} catch {
+  // Invalid credentials are expected; the assertion is on KDF work below.
+}
+assertEqual(
+  unknownIdentityKdfExecutions,
+  1,
+  'M12: an unknown email should still perform one password derivation to avoid a large login timing gap.',
+);
+
 let wrongPasswordRejected = false;
 try {
   await firstValueFrom(
@@ -154,6 +177,19 @@ assertEqual(
   duplicateRegisterResponse.headers.get('location'),
   '/register?error=exists',
   'M12: duplicate registration should return the stable already-registered UI state.',
+);
+
+const missingOriginLogin = await app.request('/auth/login', {
+  method: 'POST',
+  headers: {
+    'content-type': 'application/x-www-form-urlencoded',
+  },
+  body: new URLSearchParams(credentials),
+});
+assertEqual(
+  missingOriginLogin.status,
+  403,
+  'M12: authentication mutations should require an explicit matching Origin header.',
 );
 
 const crossSiteLogin = await app.request('/auth/login', {

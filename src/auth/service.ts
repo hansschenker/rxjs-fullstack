@@ -130,9 +130,19 @@ export const createAuthService = ({
         const user = await firstValueFrom(
           repository.findUserByEmail$(credentials.email, options),
         );
-        const passwordMatches = user
-          ? await passwordHasher.verify(credentials.password, user.passwordHash)
-          : false;
+
+        let passwordMatches = false;
+        if (user) {
+          passwordMatches = await passwordHasher.verify(
+            credentials.password,
+            user.passwordHash,
+          );
+        } else {
+          // Perform one password derivation for unknown identities as well so
+          // the invalid-login path does not expose a large password-KDF timing gap.
+          await passwordHasher.hash(credentials.password);
+        }
+
         if (!user || !passwordMatches) {
           throw new AuthInvalidCredentialsError();
         }

@@ -52,7 +52,7 @@ const mutationIsSameOrigin = (request: Request): boolean => {
   const expectedOrigin = new URL(request.url).origin;
   const origin = request.headers.get('origin');
   const fetchSite = request.headers.get('sec-fetch-site');
-  return fetchSite !== 'cross-site' && (!origin || origin === expectedOrigin);
+  return origin === expectedOrigin && fetchSite !== 'cross-site';
 };
 
 const credentialsFromForm = async (context: Context) => {
