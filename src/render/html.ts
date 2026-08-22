@@ -93,10 +93,39 @@ export const renderToString = (view: ViewChild): string => {
   return renderElement(view);
 };
 
+export interface HtmlJsonScript {
+  readonly id: string;
+  readonly value: unknown;
+}
+
 export interface HtmlDocumentOptions {
   readonly title: string;
   readonly body: string;
+  readonly jsonScripts?: readonly HtmlJsonScript[];
 }
 
-export const renderDocument = ({ title, body }: HtmlDocumentOptions): string =>
-  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head><body>${body}</body></html>`;
+const serializeJsonForHtml = (value: unknown): string => {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new TypeError('JSON bootstrap data must be serializable.');
+  }
+
+  return serialized
+    .replaceAll('&', '\\u0026')
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e')
+    .replaceAll('\u2028', '\\u2028')
+    .replaceAll('\u2029', '\\u2029');
+};
+
+const renderJsonScript = ({ id, value }: HtmlJsonScript): string =>
+  `<script id="${escapeHtml(id)}" type="application/json">${serializeJsonForHtml(value)}</script>`;
+
+export const renderDocument = ({
+  title,
+  body,
+  jsonScripts = [],
+}: HtmlDocumentOptions): string => {
+  const scripts = jsonScripts.map(renderJsonScript).join('');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head><body>${body}${scripts}</body></html>`;
+};

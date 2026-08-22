@@ -2,6 +2,13 @@ import { defer, firstValueFrom, map, of } from 'rxjs';
 
 import { helloRoute } from '../src/examples/routes';
 import { Fragment, jsx } from '../src/jsx/runtime';
+import {
+  QUERY_STATE_SCRIPT_ID,
+  QueryClient,
+  dehydrate,
+  hydrateQueryClientFromDocument,
+  queryOptions,
+} from '../src/query';
 import { generatedRouteFiles } from '../src/routes.generated';
 import { renderToString } from '../src/render/html';
 import type { RouteParams } from '../src/router/route';
@@ -51,16 +58,16 @@ assert(
 );
 
 const response = await app.request('/');
-assertEqual(response.status, 200, 'M04-M07: root route should return HTTP 200.');
+assertEqual(response.status, 200, 'M04-M08: root route should return HTTP 200.');
 const body = await response.text();
 assert(body.includes('<h1>RxJS Fullstack</h1>'), 'M04: root route should return SSR HTML.');
 assert(
-  body.includes('M01-M07 vertical slice with forms and server actions'),
-  'M07: SSR route should report the current milestone.',
+  body.includes('M01-M08 vertical slice with SSR query continuity'),
+  'M08: SSR route should report the current milestone.',
 );
 
 const counterResponse = await app.request('/counter');
-assertEqual(counterResponse.status, 200, 'M05-M07: counter route should return HTTP 200.');
+assertEqual(counterResponse.status, 200, 'M05-M08: counter route should return HTTP 200.');
 const counterBody = await counterResponse.text();
 assert(counterBody.includes('<h1>RxJS Fullstack Counter</h1>'), 'M05: router should render nested counter route.');
 
@@ -93,8 +100,6 @@ assertEqual(
   'M05: route href should require and encode path-derived params.',
 );
 
-// These are compile-time assertions (tsc must report an error on each call)
-// AND runtime assertions: href throws when the path param is missing.
 let hrefMissingParamRejected = false;
 try {
   // @ts-expect-error M05: href requires the path-derived "name" parameter.
@@ -114,14 +119,70 @@ try {
 assert(hrefWrongParamRejected, 'M05: href should throw for unrelated parameter names.');
 
 const todosResponse = await app.request('/todos');
-assertEqual(todosResponse.status, 200, 'M05-M07: todos route should return HTTP 200.');
+assertEqual(todosResponse.status, 200, 'M05-M08: todos route should return HTTP 200.');
 const todosBody = await todosResponse.text();
 assert(todosBody.includes('<h1>RxJS Fullstack Todos</h1>'), 'M05: todos route should render SSR HTML.');
+assert(
+  todosBody.includes('Port TanStack Query to RxJS'),
+  'M08: Todos SSR should contain server-prefetched query data instead of a loading placeholder.',
+);
+assert(
+  !todosBody.includes('Loading todos...'),
+  'M08: Todos SSR should not cold-start from a loading placeholder.',
+);
+assert(
+  todosBody.includes(`id="${QUERY_STATE_SCRIPT_ID}"`),
+  'M08: SSR HTML should carry dehydrated Query/Cache state for the browser.',
+);
 
 const todosApi = await app.request('/api/todos');
 assertEqual(todosApi.status, 200, 'M05: todos API should return HTTP 200.');
 const todosJson = (await todosApi.json()) as ReadonlyArray<{ readonly id: number }>;
 assert(Array.isArray(todosJson) && todosJson.length > 0, 'M05: todos API should return seeded todos.');
+
+const serverQueryClient = new QueryClient();
+let serverQueryExecutions = 0;
+const serverContinuityQuery = queryOptions({
+  queryKey: ['m08-continuity'] as const,
+  staleTime: 60_000,
+  queryFn: async () => {
+    serverQueryExecutions += 1;
+    return { value: 42 } as const;
+  },
+});
+await firstValueFrom(serverQueryClient.fetchQuery(serverContinuityQuery));
+assertEqual(serverQueryExecutions, 1, 'M08: server query should execute once before dehydration.');
+
+const dehydratedState = dehydrate(serverQueryClient);
+const browserQueryClient = new QueryClient();
+const didHydrate = hydrateQueryClientFromDocument(browserQueryClient, {
+  getElementById: (id) =>
+    id === QUERY_STATE_SCRIPT_ID
+      ? { textContent: JSON.stringify(dehydratedState) }
+      : null,
+});
+assert(didHydrate, 'M08: browser bootstrap should restore serialized Query/Cache state.');
+
+let browserQueryExecutions = 0;
+const browserContinuityQuery = queryOptions({
+  queryKey: ['m08-continuity'] as const,
+  staleTime: 60_000,
+  queryFn: async () => {
+    browserQueryExecutions += 1;
+    return { value: 99 } as const;
+  },
+});
+const hydratedResult = await firstValueFrom(browserQueryClient.query$(browserContinuityQuery));
+assertEqual(
+  hydratedResult.data?.value,
+  42,
+  'M08: browser query should begin from the server-resolved cached value.',
+);
+assertEqual(
+  browserQueryExecutions,
+  0,
+  'M08: a fresh hydrated query should not execute an unnecessary second cold fetch.',
+);
 
 let actionParses = 0;
 let actionExecutions = 0;
@@ -187,4 +248,4 @@ assertEqual(
   'M07: Todo creation should no longer use the ad-hoc POST /api/todos endpoint.',
 );
 
-console.log('M01-M07 verification passed.');
+console.log('M01-M08 verification passed.');

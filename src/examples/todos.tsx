@@ -40,6 +40,39 @@ const readTodoSubmission = (event: SubmitEvent): TodoSubmission | undefined => {
   return input ? { form, input } : undefined;
 };
 
+export const TodoList = ({ todos }: { readonly todos: readonly Todo[] }) => (
+  <ul>
+    {todos.map(
+      (todo: Todo): ViewChild => (
+        <li>
+          {todo.done ? '✓ ' : '○ '}
+          {todo.title}
+        </li>
+      ),
+    )}
+  </ul>
+);
+
+export const TodoSnapshot = ({ todos }: { readonly todos: readonly Todo[] }) => (
+  <section>
+    <h2>Todos</h2>
+    <p>Prefetched on the server and carried into the browser Query/Cache.</p>
+    <TodoList todos={todos} />
+  </section>
+);
+
+const TodoFormFields = () => (
+  <>
+    <input
+      name="title"
+      type="text"
+      placeholder="What needs doing?"
+      required
+    />
+    <button type="submit">Add</button>
+  </>
+);
+
 export const TodoApp = () => {
   const submit$ = new Subject<SubmitEvent>();
 
@@ -53,18 +86,7 @@ export const TodoApp = () => {
         return <p>Failed to load todos.</p>;
       }
 
-      return (
-        <ul>
-          {result.data?.map(
-            (todo: Todo): ViewChild => (
-              <li>
-                {todo.done ? '✓ ' : '○ '}
-                {todo.title}
-              </li>
-            ),
-          ) ?? null}
-        </ul>
-      );
+      return <TodoList todos={result.data ?? []} />;
     }),
   );
 
@@ -100,13 +122,7 @@ export const TodoApp = () => {
       </p>
       {list$}
       <form on={{ submit: submit$ }}>
-        <input
-          name="title"
-          type="text"
-          placeholder="What needs doing?"
-          required
-        />
-        <button type="submit">Add</button>
+        <TodoFormFields />
       </form>
       <p>{status$}</p>
     </section>
