@@ -55,13 +55,14 @@ export const createPgliteAuthRepositoryForDatabase = (
         `
           INSERT INTO auth_users (email, password_hash)
           VALUES ($1, $2)
+          ON CONFLICT (email) DO NOTHING
           RETURNING id, email, password_hash
         `,
         [email, passwordHash],
       );
       const row = result.rows[0];
       if (!row) {
-        throw new Error('Database insert did not return the created auth user.');
+        return undefined;
       }
       const user: AuthUser = { id: row.id, email: row.email };
       return user;

@@ -8,7 +8,10 @@ import {
   createPbkdf2PasswordHasher,
   hashOpaqueToken,
 } from '../src/auth/password';
-import { createAuthService } from '../src/auth/service';
+import {
+  AuthEmailAlreadyRegisteredError,
+  createAuthService,
+} from '../src/auth/service';
 import { createMemoryAuthRepository } from '../src/database/memory-auth-repository';
 import { createMemoryTodoRepository } from '../src/database/memory-todos-repository';
 import { createPgliteApplicationRepositories } from '../src/database/pglite-application-repositories';
@@ -72,6 +75,25 @@ assert(
   'M12: repositories must store a salted password derivation instead of plaintext.',
 );
 assertEqual(registeredUser.email, credentials.email, 'M12: registration should normalize the user identity.');
+assertEqual(
+  await firstValueFrom(
+    authRepository.createUser$(credentials.email, 'duplicate-password-hash'),
+  ),
+  undefined,
+  'M12: the repository create boundary should report an email conflict instead of throwing a generic persistence error.',
+);
+
+let duplicateRegistrationRejected = false;
+try {
+  await firstValueFrom(authService.register$(credentials));
+} catch (error) {
+  duplicateRegistrationRejected =
+    error instanceof AuthEmailAlreadyRegisteredError;
+}
+assert(
+  duplicateRegistrationRejected,
+  'M12: duplicate registration should surface the typed already-registered result.',
+);
 
 let wrongPasswordRejected = false;
 try {
@@ -118,6 +140,21 @@ const registerResponse = await app.request('/auth/register', {
   body: new URLSearchParams(credentials),
 });
 assertEqual(registerResponse.status, 303, 'M12: registration should use POST/redirect/GET.');
+
+const duplicateRegisterResponse = await app.request('/auth/register', {
+  method: 'POST',
+  headers: {
+    'content-type': 'application/x-www-form-urlencoded',
+    origin: 'http://localhost',
+  },
+  body: new URLSearchParams(credentials),
+});
+assertEqual(duplicateRegisterResponse.status, 303, 'M12: duplicate registration should stay on the normal redirect path.');
+assertEqual(
+  duplicateRegisterResponse.headers.get('location'),
+  '/register?error=exists',
+  'M12: duplicate registration should return the stable already-registered UI state.',
+);
 
 const crossSiteLogin = await app.request('/auth/login', {
   method: 'POST',
@@ -235,6 +272,16 @@ try {
     passwordHasher: testHasher,
   });
   await firstValueFrom(firstService.register$(credentials));
+  assertEqual(
+    await firstValueFrom(
+      firstRepositories.authRepository.createUser$(
+        credentials.email,
+        'duplicate-password-hash',
+      ),
+    ),
+    undefined,
+    'M12: Postgres email conflicts should be represented by the repository contract instead of an untyped uniqueness exception.',
+  );
   const persistedSession = await firstValueFrom(firstService.login$(credentials));
   await firstRepositories.close();
 

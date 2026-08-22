@@ -30,7 +30,7 @@ export const createMemoryAuthRepository = (): AuthRepository => {
       defer(() => {
         throwIfRepositoryOperationAborted(options?.signal);
         if (users.some((candidate) => candidate.email === email)) {
-          throw new Error('Auth user already exists.');
+          return of(undefined);
         }
         const user: StoredAuthUser = {
           id: nextUserId++,

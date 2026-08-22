@@ -117,9 +117,13 @@ export const createAuthService = ({
         }
 
         const passwordHash = await passwordHasher.hash(credentials.password);
-        return firstValueFrom(
+        const created = await firstValueFrom(
           repository.createUser$(credentials.email, passwordHash, options),
         );
+        if (!created) {
+          throw new AuthEmailAlreadyRegisteredError();
+        }
+        return created;
       }),
     login$: (credentials, options) =>
       defer(async () => {

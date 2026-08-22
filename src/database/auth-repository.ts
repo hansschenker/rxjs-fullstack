@@ -29,7 +29,7 @@ export interface AuthRepository {
     email: string,
     passwordHash: string,
     options?: RepositoryOperationOptions,
-  ): Observable<AuthUser>;
+  ): Observable<AuthUser | undefined>;
   createSession$(
     session: CreateStoredAuthSession,
     options?: RepositoryOperationOptions,
