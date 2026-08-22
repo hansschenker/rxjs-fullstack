@@ -1,7 +1,6 @@
 import { defer, firstValueFrom, map, of } from 'rxjs';
-import { createRoute } from 'rxjs-router';
+import { buildPath, createRoute, type PathParams } from 'rxjs-router';
 
-import { helloRoute } from '../src/examples/routes';
 import { Fragment, jsx } from '../src/jsx/runtime';
 import {
   QUERY_STATE_SCRIPT_ID,
@@ -11,7 +10,6 @@ import {
   queryOptions,
 } from '../src/query';
 import { renderToString } from '../src/render/html';
-import type { RouteParams } from '../src/router/route';
 import { generatedRouteFiles, routes } from '../src/routes.generated';
 import { executeServerAction$ } from '../src/server/action';
 import { app } from '../src/server/app';
@@ -98,7 +96,7 @@ const health = await app.request('/health');
 assertEqual(health.status, 200, 'M04: health route should return HTTP 200.');
 assertEqual(await health.text(), '{"ok":true}', 'M04: health route should return JSON.');
 
-const typedParams: RouteParams<'/teams/:teamId/users/:userId'> = {
+const typedParams: PathParams<'/teams/$teamId/users/$userId'> = {
   teamId: 'rxjs',
   userId: '42',
 };
@@ -106,28 +104,38 @@ assertEqual(typedParams.teamId, 'rxjs', 'M05: route path should infer teamId.');
 assertEqual(typedParams.userId, '42', 'M05: route path should infer userId.');
 
 assertEqual(
-  helloRoute.href({ name: 'Erik Meijer' }),
+  buildPath({ path: '/hello/$name', params: { name: 'Erik Meijer' } }),
   '/hello/Erik%20Meijer',
-  'M05: route href should require and encode path-derived params.',
+  'M05: buildPath should require and encode path-derived params.',
 );
 
 let hrefMissingParamRejected = false;
 try {
-  // @ts-expect-error M05: href requires the path-derived "name" parameter.
-  helloRoute.href({});
+  // @ts-expect-error M05: buildPath requires the path-derived "name" parameter.
+  buildPath({ path: '/hello/$name', params: {} });
 } catch {
   hrefMissingParamRejected = true;
 }
-assert(hrefMissingParamRejected, 'M05: href should throw when a path param is missing.');
+assert(hrefMissingParamRejected, 'M05: buildPath should throw when a path param is missing.');
 
 let hrefWrongParamRejected = false;
 try {
-  // @ts-expect-error M05: href rejects unrelated parameter names.
-  helloRoute.href({ id: 'Erik' });
+  // @ts-expect-error M05: buildPath rejects unrelated parameter names.
+  buildPath({ path: '/hello/$name', params: { id: 'Erik' } });
 } catch {
   hrefWrongParamRejected = true;
 }
-assert(hrefWrongParamRejected, 'M05: href should throw for unrelated parameter names.');
+assert(hrefWrongParamRejected, 'M05: buildPath should throw for unrelated parameter names.');
+
+const helloResponse = await app.request('/hello/Erik%20Meijer');
+assertEqual(helloResponse.status, 200, 'M05: hello route should return HTTP 200.');
+const helloBody = await helloResponse.text();
+assert(helloBody.includes('<h1>Hello Erik Meijer</h1>'), 'M05: hello route should render the decoded path param.');
+assert(helloBody.includes('<title>Hello Erik Meijer</title>'), 'M05: hello route title should derive from the param.');
+assert(
+  generatedRouteFiles.includes('hello.tsx'),
+  'M06: the hello route should be a discovered route module, not manual registration.',
+);
 
 const todosResponse = await app.request('/todos');
 assertEqual(todosResponse.status, 200, 'M05-M13: todos route should return HTTP 200.');

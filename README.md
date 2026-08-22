@@ -126,7 +126,7 @@ The running application uses the sibling `rxjs-router` package on both server an
 - browser: `createRouter({ routes, history })`,
 - browser view state: `router.state$`.
 
-The repository also retains the earlier typed-route experiment in `src/router/`, including path-literal-derived params and typed `href(...)` generation as a proof of the routing type model.
+An earlier standalone typed-route experiment in `src/router/` proved the routing type model with path-literal-derived params and typed `href(...)` generation. It has since been removed: `rxjs-router` itself provides the same guarantees through `PathParams` inference and typed `buildPath(...)` URL construction, and the dynamic `/hello/$name` page now lives in the application route tree as an ordinary discovered route module.
 
 M05 also internalizes the Query/Cache layer under `src/query/`. Queries are Observables, mutations expose cold `mutate$()` streams, invalidation/refetching stays explicit, and the Todos vertical slice proves browser Query/Cache against a Hono API.
 
@@ -4379,6 +4379,7 @@ GET  /streaming
 GET  /login
 GET  /register
 GET  /account/:section
+GET  /hello/:name
 GET  /api/todos
 POST /api/actions/todos.create
 POST /auth/register
@@ -4387,7 +4388,7 @@ POST /auth/logout
 GET  /auth/session
 ```
 
-The older `/hello/:name` code remains in `src/examples/routes.tsx` as a typed-routing proof for path-derived params and `href()` generation; it is not part of the generated M06–M13 application route tree.
+The dynamic `/hello/:name` page is part of the generated route tree (`src/routes/hello.tsx`). The earlier standalone typed-routing experiment (`src/router/`, `src/examples/routes.tsx`) has been removed; the verification script proves the same typed-params and typed-URL guarantees directly against `rxjs-router`'s `PathParams` and `buildPath()`.
 
 ## Development collaboration
 

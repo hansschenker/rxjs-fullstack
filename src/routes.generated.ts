@@ -3,17 +3,22 @@
 import { createRoute } from 'rxjs-router';
 import { loadRootData } from './routes/root';
 import route0 from './routes/about';
-import route1 from './routes/counter';
-import route2 from './routes/home';
-import route3 from './routes/todos';
+import route1 from './routes/account';
+import route2 from './routes/counter';
+import route3 from './routes/hello';
+import route4 from './routes/home';
+import route5 from './routes/login';
+import route6 from './routes/register';
+import route7 from './routes/streaming';
+import route8 from './routes/todos';
 
-export const generatedRouteFiles = ["about.tsx","counter.tsx","home.tsx","todos.tsx"] as const;
+export const generatedRouteFiles = ["about.tsx","account.tsx","counter.tsx","hello.tsx","home.tsx","login.tsx","register.tsx","streaming.tsx","todos.tsx"] as const;
 
 export const routes = [
   createRoute({
     id: 'root',
     path: '/',
     loader: loadRootData,
-    children: [route0, route1, route2, route3],
+    children: [route0, route1, route2, route3, route4, route5, route6, route7, route8],
   }),
 ] as const;
