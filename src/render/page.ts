@@ -1,4 +1,4 @@
-import { firstValueFrom, map, toArray } from 'rxjs';
+import { firstValueFrom, map, toArray, type Observable } from 'rxjs';
 import { resolveRequest, type AnyRoute } from 'rxjs-router';
 
 import type { ResolvedAuthSession } from '../auth/types';
@@ -11,8 +11,8 @@ import type { PageData } from '../routes/types';
 import type { ServerRouteContext } from '../server/route-context';
 import {
   renderDocument,
-  renderDocumentStream,
   renderToString,
+  type HtmlJsonScript,
 } from './html';
 
 export type RouteDocumentResult =
@@ -43,7 +43,9 @@ export type RouteResponseResult =
       readonly type: 'stream';
       readonly statusCode: 200;
       readonly title: string;
-      readonly body: ReadableStream<Uint8Array>;
+      readonly initialBody: string;
+      readonly body$: Observable<string>;
+      readonly jsonScripts: () => readonly HtmlJsonScript[];
     };
 
 export interface RenderRouteDocumentOptions {
@@ -175,12 +177,9 @@ export const renderRouteResponse = async (
       type: 'stream',
       statusCode: 200,
       title: page.title,
-      body: renderDocumentStream({
-        title: page.title,
-        initialBody: renderToString(page.view),
-        body$: page.stream$.pipe(map(renderToString)),
-        jsonScripts: () => queryStateScripts(queryClient),
-      }),
+      initialBody: renderToString(page.view),
+      body$: page.stream$.pipe(map(renderToString)),
+      jsonScripts: () => queryStateScripts(queryClient),
     };
   } catch (error) {
     return {
