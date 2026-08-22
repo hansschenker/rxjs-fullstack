@@ -144,7 +144,10 @@ try {
     'M11: actual Node runtime should expose the seeded database-backed Todo repository.',
   );
 
-  const nodeStreaming = await fetch(`${nodeOrigin}/streaming`);
+  const streamingSignal = AbortSignal.timeout(5_000);
+  const nodeStreaming = await fetch(`${nodeOrigin}/streaming`, {
+    signal: streamingSignal,
+  });
   assertEqual(nodeStreaming.status, 200, 'M13: actual Node runtime should serve streaming SSR.');
   assert(
     nodeStreaming.body,
@@ -162,11 +165,11 @@ try {
   });
   assert(
     firstStreamingHtml.includes('id="streaming-shell"'),
-    'M13: actual Node first chunk should contain the streaming shell.',
+    'M13: @hono/node-server first read should contain the streaming shell in this runtime proof.',
   );
   assert(
     !firstStreamingHtml.includes('id="streaming-todos"'),
-    'M13: actual Node first chunk should arrive before query-backed streamed content.',
+    'M13: @hono/node-server first read should precede delayed query-backed content in this runtime proof.',
   );
 
   let completeStreamingHtml = firstStreamingHtml;
@@ -182,7 +185,7 @@ try {
     completeStreamingHtml.includes('id="streaming-progress"') &&
       completeStreamingHtml.includes('id="streaming-todos"') &&
       completeStreamingHtml.includes('"queryKey":["todos"]'),
-    'M13: actual Node runtime should deliver all RxJS chunks and final Query/Cache state.',
+    'M13: actual Node runtime should preserve stream order and deliver all RxJS chunks plus final Query/Cache state.',
   );
 
   const nodeCredentials = new URLSearchParams({
