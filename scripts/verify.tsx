@@ -1,4 +1,4 @@
-import { defer, firstValueFrom, map, of } from 'rxjs';
+import { defer, filter, firstValueFrom, map, of } from 'rxjs';
 import { buildPath, createRoute, type PathParams } from 'rxjs-router';
 
 import { Fragment, jsx } from '../src/jsx/runtime';
@@ -224,6 +224,113 @@ const todosApi = await app.request('/api/todos');
 assertEqual(todosApi.status, 200, 'M05: todos API should return HTTP 200.');
 const todosJson = (await todosApi.json()) as ReadonlyArray<{ readonly id: number }>;
 assert(Array.isArray(todosJson) && todosJson.length > 0, 'M05: todos API should return seeded todos.');
+
+// M05 Query/Cache behavior: the reactive query surface must stay lazy, dedupe
+// concurrent subscribers, serve fresh cache hits without refetching, refetch
+// on invalidation, release unobserved queries per gcTime, and keep mutations
+// cold until subscription.
+const behaviorClient = new QueryClient();
+
+let dedupExecutions = 0;
+const dedupQuery = queryOptions({
+  queryKey: ['m05-dedup'] as const,
+  staleTime: 60_000,
+  queryFn: async () => {
+    dedupExecutions += 1;
+    return dedupExecutions;
+  },
+});
+
+const dedup$ = behaviorClient.query$(dedupQuery);
+assertEqual(dedupExecutions, 0, 'M05: query$ must remain lazy before subscription.');
+
+const [firstDedup, secondDedup] = await Promise.all([
+  firstValueFrom(dedup$.pipe(filter((result) => result.isSuccess))),
+  firstValueFrom(dedup$.pipe(filter((result) => result.isSuccess))),
+]);
+assertEqual(
+  dedupExecutions,
+  1,
+  'M05: concurrent subscriptions with one query key should share a single queryFn execution.',
+);
+assertEqual(firstDedup.data, 1, 'M05: the first subscriber should receive the shared fetch result.');
+assertEqual(secondDedup.data, 1, 'M05: the second subscriber should receive the shared fetch result.');
+
+const cachedDedup = await firstValueFrom(dedup$.pipe(filter((result) => result.isSuccess)));
+assertEqual(
+  dedupExecutions,
+  1,
+  'M05: a fresh cached query should be served without a new queryFn execution.',
+);
+assertEqual(cachedDedup.data, 1, 'M05: a later subscriber should receive the cached value.');
+
+let invalidationExecutions = 0;
+const invalidationQuery = queryOptions({
+  queryKey: ['m05-invalidate'] as const,
+  staleTime: 60_000,
+  queryFn: async () => {
+    invalidationExecutions += 1;
+    return invalidationExecutions;
+  },
+});
+
+const invalidation$ = behaviorClient.query$(invalidationQuery);
+let refetchedValue: number | undefined;
+const invalidationSub = invalidation$.subscribe((result) => {
+  if (result.isSuccess && result.data === 2) {
+    refetchedValue = result.data;
+  }
+});
+await firstValueFrom(invalidation$.pipe(filter((result) => result.isSuccess)));
+assertEqual(invalidationExecutions, 1, 'M05: an observed query should fetch once on mount.');
+
+await firstValueFrom(
+  behaviorClient.invalidateQueries({ queryKey: invalidationQuery.queryKey }),
+);
+assertEqual(
+  invalidationExecutions,
+  2,
+  'M05: invalidateQueries should refetch the actively observed query.',
+);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assertEqual(refetchedValue, 2, 'M05: the standing subscription should receive the refetched value.');
+invalidationSub.unsubscribe();
+
+let gcExecutions = 0;
+const gcQuery = queryOptions({
+  queryKey: ['m05-gc'] as const,
+  gcTime: 0,
+  queryFn: async () => {
+    gcExecutions += 1;
+    return gcExecutions;
+  },
+});
+await firstValueFrom(behaviorClient.query$(gcQuery).pipe(filter((result) => result.isSuccess)));
+assertEqual(gcExecutions, 1, 'M05: the gc probe query should have fetched once while observed.');
+await new Promise((resolve) => setTimeout(resolve, 10));
+assertEqual(
+  behaviorClient.queryCache.find({ queryKey: gcQuery.queryKey }),
+  undefined,
+  'M05: an unobserved query should be garbage-collected from the cache after gcTime.',
+);
+
+let mutationExecutions = 0;
+let mutationSettled = 0;
+const doubler = behaviorClient.mutation<number, Error, number>({
+  mutationFn: async (value) => {
+    mutationExecutions += 1;
+    return value * 2;
+  },
+  onSettled: () => {
+    mutationSettled += 1;
+  },
+});
+
+const doubled$ = doubler.mutate$(21);
+assertEqual(mutationExecutions, 0, 'M05: mutate$ must remain lazy before subscription.');
+assertEqual(await firstValueFrom(doubled$), 42, 'M05: mutate$ should emit the mutation result.');
+assertEqual(mutationExecutions, 1, 'M05: one mutate$ subscription should run the mutation exactly once.');
+assertEqual(mutationSettled, 1, 'M05: onSettled should run after the mutation completes.');
 
 const serverQueryClient = new QueryClient();
 let serverQueryExecutions = 0;
