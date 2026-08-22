@@ -21,7 +21,7 @@ app.get('*', async (context) => {
   const queryClient = new QueryClient();
   const routeContext: ServerRouteContext = {
     queryClient,
-    fetch: (input, init) => {
+    fetch: async (input, init) => {
       const url = new URL(input, context.req.raw.url);
       return app.request(`${url.pathname}${url.search}`, init);
     },
