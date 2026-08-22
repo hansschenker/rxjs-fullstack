@@ -15,6 +15,7 @@
     "verify": "bun run generate:routes && bun run scripts/verify.tsx",
     "verify:database": "bun run scripts/verify-database.ts",
     "verify:auth": "bun run scripts/verify-auth.ts",
+    "verify:streaming": "bun run scripts/verify-streaming.ts",
     "build:static": "bun run generate:routes && bun run scripts/generate-static.ts",
     "verify:static": "bun run scripts/verify-static.ts",
     "build:node": "bun build src/runtime/node.ts --outfile dist/runtime/node.js --target node --external @electric-sql/pglite",
@@ -22,7 +23,7 @@
     "verify:runtimes": "bun run scripts/verify-runtimes.ts",
     "build:client": "bun build src/examples/counter-client.tsx --outdir dist/client --target browser",
     "build:todos": "bun build src/examples/todos-client.tsx --outdir dist/client --target browser",
-    "check": "bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run verify:database && bun run verify:auth && bun run scripts/generate-static.ts && bun run scripts/verify-static.ts && bun run build:node && bun run build:worker && bun run verify:runtimes && bun run build:client && bun run build:todos"
+    "check": "bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run verify:database && bun run verify:auth && bun run verify:streaming && bun run scripts/generate-static.ts && bun run scripts/verify-static.ts && bun run build:node && bun run build:worker && bun run verify:runtimes && bun run build:client && bun run build:todos"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.5",

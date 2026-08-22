@@ -35,6 +35,7 @@ M09  Static Site Generation                       ✅
 M10  Runtime Adapters                             ✅
 M11  Database Integration                         ✅
 M12  Authentication                               ✅
+M13  Streaming / Advanced SSR                     ✅
 ```
 
 ## M01 — TypeScript JSX runtime
@@ -3547,7 +3548,643 @@ RxJS               lazy authentication effect execution
 
 The broader M12 principle is: **authentication changes who may execute a route; it does not change the RxJS machine that executes the application.**
 
-## What M01–M12 establish
+## M13 — Streaming / Advanced SSR
+
+M13 completes the original roadmap by adding progressive HTML delivery without adding a second rendering or execution model.
+
+Before M13, request-time SSR always waited until a complete page could be serialized into one HTML string:
+
+```text
+HTTP request
+    ↓
+route loaders
+    ↓
+all required server work resolves
+    ↓
+renderToString()
+    ↓
+complete HTML string
+    ↓
+Response
+```
+
+That model remains valuable and is still used for ordinary pages and static generation. M13 adds a second **delivery policy** for pages whose server work can be usefully revealed in phases:
+
+```text
+HTTP request
+    ↓
+route loader
+    ↓
+resolved shell ViewChild
+    ↓
+HTML document starts
+    ↓
+stream$: Observable<ViewChild>
+    ↓
+resolved chunk → renderToString() → response bytes
+    ↓
+resolved chunk → renderToString() → response bytes
+    ↓
+stream completes
+    ↓
+final Query/Cache bootstrap + document close
+```
+
+The central M13 rule is: **streaming changes when rendered HTML is delivered; it does not change who owns execution or how JSX is rendered.**
+
+### PageData gains an optional progressive body source
+
+The page contract now supports:
+
+```ts
+interface PageData {
+  readonly title: string;
+  readonly view: ViewChild;
+  readonly stream$?: Observable<ViewChild>;
+}
+```
+
+The existing `view` remains the page's immediately available server representation.
+
+When `stream$` is absent:
+
+```text
+PageData
+  ↓
+ordinary buffered SSR
+```
+
+When `stream$` is present:
+
+```text
+PageData.view       → initial shell
+PageData.stream$    → later complete ViewChild chunks
+```
+
+The route therefore declares that progressive server values exist, but it does not write bytes or know about `ReadableStream`.
+
+### M03's pure renderer remains unchanged
+
+M13 deliberately does **not** teach `renderToString()` how to subscribe to an Observable.
+
+Every streamed emission still follows the M03 rule:
+
+```text
+Observable<ViewChild>
+      ↓
+RxJS subscription owns execution
+      ↓
+resolved ViewChild
+      ↓
+pure renderToString()
+      ↓
+HTML string
+```
+
+If an Observable itself reaches `renderToString()`, it is still rejected exactly as before.
+
+This is one of the most important M13 invariants: **streaming belongs outside the pure renderer.**
+
+### The HTML document is split into stable framing and progressive body chunks
+
+`src/render/html.ts` now exposes the document framing that was previously assembled in one function:
+
+```text
+renderDocumentPrefix()
+renderDocumentSuffix()
+```
+
+Buffered rendering remains:
+
+```text
+prefix + complete body + suffix
+```
+
+Streaming rendering becomes:
+
+```text
+prefix + initial body
+        ↓
+     chunk 1
+        ↓
+     chunk 2
+        ↓
+     ...
+        ↓
+final bootstrap scripts + suffix
+```
+
+Each chunk is a complete rendered sibling fragment. M13 does not stream half-open JSX elements or ask the pure renderer to maintain hidden element state across chunks.
+
+### Web ReadableStream owns byte delivery
+
+`renderDocumentStream()` translates rendered HTML strings into a standard Web `ReadableStream<Uint8Array>`.
+
+Its responsibility is deliberately narrow:
+
+```text
+HTML strings
+    ↓
+TextEncoder
+    ↓
+Uint8Array chunks
+    ↓
+ReadableStream
+```
+
+The stream writer does not know route matching, Todo semantics, authentication, Query/Cache policy, or browser DOM bindings.
+
+This keeps the M10 portability boundary intact: Bun, Node.js, and fetch-native runtimes can host the same Web response body shape.
+
+### Request-time rendering now distinguishes page resolution from delivery
+
+M13 factors the page path into one route-resolution plan and two consumers.
+
+Buffered consumer:
+
+```text
+resolve route once
+      ↓
+PageData
+      ↓
+collect stream$ if present
+      ↓
+render complete document
+      ↓
+RouteDocumentResult.page
+```
+
+Request-time consumer:
+
+```text
+resolve route once
+      ↓
+PageData
+      ↓
+stream$ present?
+   ├── no  → buffered page response
+   └── yes → Web ReadableStream response
+```
+
+The new request-time entry is `renderRouteResponse()`.
+
+The existing `renderRouteDocument()` remains the buffered contract used by M09 SSG and other callers that need one complete HTML document.
+
+There is still one route tree, one set of loaders, one QueryClient, and one JSX renderer.
+
+### The `/streaming` route is the M13 proof
+
+M13 adds one concrete route whose server output has three observable phases:
+
+```text
+GET /streaming
+      ↓
+streaming-shell
+      ↓
+streaming-progress
+      ↓
+streaming-todos
+      ↓
+rxjs-query-state
+      ↓
+</body></html>
+```
+
+The first phase is available immediately:
+
+```text
+<header id="streaming-shell">
+  ... shell content ...
+</header>
+```
+
+The later phases are described by a cold RxJS `stream$`.
+
+An intermediate timer-backed emission proves that the response remains open while more server work is pending. The final phase waits for the normal request-scoped Todos Query/Cache read and renders the resulting Todo snapshot.
+
+### The streaming timeline makes the delivery distinction visible
+
+Conceptually:
+
+```text
+time ─────────────────────────────────────────────────────►
+
+HTTP response     open────────────────────────────────close
+
+shell             ●
+                  │
+progress                 ●
+                         │
+Todos query              │──── request / resolve ────●
+                                                    │
+Todo HTML                                            ●
+                                                    │
+query bootstrap                                      ●
+                                                    │
+document close                                        ●
+```
+
+The important observation is that the shell is delivered before the query-backed Todo chunk exists.
+
+The route does not wait for the entire server computation merely to begin the response.
+
+### Query/Cache remains the owner of the streamed read
+
+The final streamed Todo phase does not call a database adapter directly.
+
+It still follows the established M08/M11 read path:
+
+```text
+streaming route
+      ↓
+queryClient.query$(createTodosQuery(fetch))
+      ↓
+GET /api/todos
+      ↓
+TodoRepository
+      ↓
+readonly Todo[]
+      ↓
+streamed TodoSnapshot
+```
+
+The streaming route changes delivery timing only. Query identity remains:
+
+```text
+['todos']
+```
+
+and the database remains behind the existing API/repository boundary.
+
+### Query/Cache dehydration moves to stream completion
+
+For an ordinary buffered page, Query/Cache can be dehydrated after the page's server reads are resolved and before the final HTML string is returned.
+
+For a streaming page, later chunks may themselves populate Query/Cache. Dehydrating at shell time would therefore serialize an incomplete cache.
+
+M13 waits until `stream$` completes:
+
+```text
+shell sent
+   ↓
+streamed query runs
+   ↓
+query result stored in QueryClient
+   ↓
+stream$ completes
+   ↓
+dehydrate(QueryClient)
+   ↓
+rxjs-query-state script
+   ↓
+document suffix
+```
+
+The final HTML therefore carries the query state produced by the full streamed server execution.
+
+This keeps M08's data-continuity model compatible with advanced SSR.
+
+### Cancellation tears down the RxJS streaming source
+
+The Web stream and the RxJS source have one explicit ownership connection:
+
+```text
+ReadableStream body
+       ↓ owns
+RxJS body subscription
+```
+
+If the consumer cancels the response body:
+
+```text
+reader.cancel()
+      ↓
+ReadableStream.cancel()
+      ↓
+subscription.unsubscribe()
+      ↓
+stream$ teardown
+```
+
+The M13 verifier constructs a delayed Observable with an explicit teardown and proves that cancelling the Web stream runs that teardown.
+
+The route also keeps the request `AbortSignal` in its RxJS pipeline with `takeUntil(...)`, preserving the request-lifetime rule established by earlier server milestones.
+
+As with database and Web Crypto effects, M13 does not claim that unsubscription can forcibly stop an already-entered Promise operation when the underlying API offers no cancellation primitive. What it guarantees is that RxJS ownership is released and no later stream emissions are delivered to the cancelled response.
+
+### Errors before and after the response starts are different
+
+Before a response starts, ordinary SSR failures can still become an HTTP error response:
+
+```text
+resolve/render failure
+      ↓
+HTTP 500
+```
+
+After the streaming response has emitted its first bytes, the status and headers are already committed. M13 therefore treats a later `stream$` error as an in-band document failure:
+
+```text
+stream already started
+      ↓
+stream$ error
+      ↓
+generic error fragment
+      ↓
+final bootstrap state
+      ↓
+close HTML document
+```
+
+The default fallback is intentionally generic:
+
+```html
+<section data-rxjs-stream-error="true">
+  <p>Streaming content failed.</p>
+</section>
+```
+
+Internal exception details are not rendered into the response.
+
+The verifier explicitly throws a message containing a sensitive test string and proves that the string never appears in streamed HTML.
+
+### Streaming response headers are an HTTP policy
+
+The Hono boundary translates a streaming result into a Web `Response` with:
+
+```text
+Content-Type: text/html; charset=UTF-8
+Content-Encoding: Identity
+Cache-Control: no-store
+```
+
+`Content-Type` states the actual response representation.
+
+`Content-Encoding: Identity` makes the progressive delivery intent explicit and avoids a compression layer becoming an accidental buffering boundary in runtimes where that can matter.
+
+`Cache-Control: no-store` prevents the partially time-dependent progressive response from being treated as a reusable complete page artifact by an intermediary cache.
+
+These headers belong to Hono/HTTP. They are not properties of `PageData` or RxJS.
+
+### M13 and M09 use the same streaming route differently
+
+The `/streaming` route is concrete, so M09's existing static route discovery automatically includes it.
+
+Request time:
+
+```text
+/streaming
+    ↓
+renderRouteResponse()
+    ↓
+ReadableStream
+    ↓
+progressive network HTML
+```
+
+Build time:
+
+```text
+/streaming
+    ↓
+renderRouteDocument()
+    ↓
+collect stream$ to completion
+    ↓
+complete HTML string
+    ↓
+dist/static/streaming/index.html
+```
+
+No route flag says "use a different implementation for SSG".
+
+The same `PageData`, QueryClient, route loader, stream Observable, and pure HTML renderer are reused. Only the consumer's delivery policy changes.
+
+### The automatic static set now contains seven pages
+
+With the new concrete route, M09 discovery produces:
+
+```text
+/
+/about
+/counter
+/login
+/register
+/streaming
+/todos
+```
+
+The protected parameterized route remains excluded:
+
+```text
+/account/$section
+```
+
+The static verifier proves that `/streaming` contains the shell, intermediate chunk, query-backed Todo chunk, and final dehydrated Todos query state in one finished document.
+
+### M13 is not DOM hydration or client Suspense
+
+Streaming HTML and DOM hydration solve different problems.
+
+M13 establishes:
+
+```text
+server can deliver complete HTML fragments progressively
+```
+
+It does not claim:
+
+```text
+browser attaches bindings to existing streamed DOM nodes in place
+```
+
+and it does not introduce a hidden Suspense/component scheduler.
+
+The emitted fragments are ordinary server HTML siblings. A future DOM-hydration feature could build on them, but that is deliberately outside the completed M01–M13 roadmap.
+
+This keeps the M08 distinction intact: Query/Cache data hydration exists; DOM hydration is still a separate concern.
+
+### M13 preserves runtime portability
+
+The streaming response uses Web Platform primitives:
+
+```text
+Response
+ReadableStream<Uint8Array>
+TextEncoder
+```
+
+The Node bundle and the fetch-native edge bundle both compile with the same implementation.
+
+The real Node verifier goes further than compilation: it starts the bundled application under the actual `node` executable and reads the response body incrementally.
+
+It proves:
+
+```text
+first network read
+    contains streaming-shell
+    does not contain streaming-todos
+
+later network reads
+    contain streaming-progress
+    contain streaming-todos
+    contain ['todos'] query bootstrap
+```
+
+So the progressive behavior survives the M10 Node transport bridge instead of existing only in an in-memory test.
+
+### M13 source map
+
+```text
+src/routes/types.ts
+  optional stream$: Observable<ViewChild>
+
+src/render/html.ts
+  renderDocumentPrefix()
+  renderDocumentSuffix()
+  renderDocumentStream()
+  Web stream cancellation → RxJS unsubscribe
+  generic in-band stream error fallback
+
+src/render/page.ts
+  shared route-resolution plan
+  renderRouteDocument() buffered consumer
+  renderRouteResponse() request-time consumer
+  final Query/Cache dehydration
+
+src/server/app.tsx
+  HTTP translation for RouteResponseResult.stream
+  streaming response headers
+
+src/routes/streaming.tsx
+  shell
+  intermediate timed RxJS chunk
+  delayed Query/Cache-backed Todo chunk
+  request AbortSignal integration
+
+scripts/verify-streaming.ts
+  early-shell proof
+  complete-stream proof
+  Query/Cache final-state proof
+  cancellation teardown proof
+  in-band error proof
+  buffered rendering proof
+
+scripts/verify-static.ts
+  complete generated /streaming artifact proof
+
+scripts/verify-runtimes.ts
+  real Node network-stream proof
+
+package.json
+  verify:streaming
+  M13 integration in the complete check gate
+```
+
+### M13 verification
+
+M13 is verified at four different boundaries.
+
+The project-wide verifier proves that:
+
+- the running home page reports the M01–M13 vertical slice,
+- `/streaming` is part of the generated concrete route set,
+- `/streaming` remains eligible for automatic SSG,
+- all earlier routing, Query/Cache, server-action, database, and authentication contracts remain green.
+
+The dedicated streaming verifier proves that:
+
+- `GET /streaming` returns HTTP `200`,
+- the response body is a Web `ReadableStream`,
+- the response is HTML,
+- `Content-Encoding` is `Identity`,
+- the progressive response is `no-store`,
+- the first chunk contains the document prefix and `streaming-shell`,
+- the first chunk does not contain `streaming-todos`,
+- a later chunk contains `streaming-progress`,
+- a later chunk contains the query-backed Todo snapshot,
+- the completed stream contains `rxjs-query-state`,
+- the completed bootstrap contains the `['todos']` query identity,
+- a successful stream closes `</body></html>`,
+- buffered rendering of the same route collects every phase,
+- cancelling the Web stream unsubscribes the RxJS source,
+- a post-start error produces the generic in-band error fragment,
+- internal error details are not leaked,
+- the error path still closes the HTML document.
+
+The static artifact verifier proves that:
+
+- `dist/static/streaming/index.html` is generated,
+- it contains shell, progress, and Todo phases,
+- it contains the final dehydrated Todos query state.
+
+The runtime verifier proves that the same progressive behavior survives the actual Node process and HTTP adapter.
+
+The complete acceptance pipeline is now:
+
+```text
+route generation
+      ↓
+strict TypeScript
+      ↓
+M01-M13 executable verification
+      ↓
+M11 database verification
+      ↓
+M12 authentication verification
+      ↓
+M13 streaming SSR verification
+      ↓
+static generation of seven concrete routes
+      ↓
+M09-M13 static artifact verification
+      ↓
+Node runtime build
+      ↓
+edge/Worker build
+      ↓
+real Node + database + auth + streaming verification
+      ↓
+browser client bundles
+```
+
+### What M13 establishes
+
+M13 adds the final delivery dimension to the project architecture:
+
+```text
+                            ┌── buffered request-time SSR
+route/data/JSX/rendering ───┼── progressive request-time SSR
+                            └── buffered build-time SSG
+```
+
+The application machine above those consumers stays stable:
+
+```text
+rxjs-router
+    ↓
+route loaders
+    ↓
+RxJS execution
+    ↓
+Query/Cache / actions / repositories / auth
+    ↓
+resolved ViewChild values
+    ↓
+pure renderToString()
+```
+
+Only the delivery policy changes:
+
+```text
+one complete HTML string
+        or
+ordered HTML chunks over a Web ReadableStream
+```
+
+That is the larger M13 result: **RxJS can own temporal server rendering while the renderer remains pure and the Web platform owns transport.**
+
+## What M01–M13 establish
 
 ```text
 M01  JSX is a typed description of a view.
@@ -3562,9 +4199,10 @@ M09  The same page machine can execute at build time to produce static HTML.
 M10  Multiple runtimes host the same Web Request → Response application.
 M11  Persistent database effects enter through injected RxJS repository ports.
 M12  Server-side identity and sessions control route access without a client auth machine.
+M13  RxJS server values can be delivered progressively without changing the pure renderer.
 ```
 
-The current architecture is:
+The completed architecture is:
 
 ```text
 TypeScript JSX
@@ -3573,40 +4211,44 @@ framework ViewChild
       ↓
 file-discovered rxjs-router tree
       ↓
-request-time route context
+request/build route context
       ├── QueryClient
       ├── fetch boundary
       └── ResolvedAuthSession | null
       ↓
 route loaders
-      ├── Query/Cache execution
-      └── authentication / authorization decisions
+      ├── Query/Cache reads
+      ├── server actions / domain effects
+      ├── repository persistence
+      ├── authentication / authorization
+      └── optional stream$: Observable<ViewChild>
       ↓
-resolved PageData
+resolved ViewChild values
       ↓
-shared route-document renderer
-      ├──────── build time ──────────► public static HTML
-      │                               / /about /counter
-      │                               /login /register /todos
-      │
-      └──────── request time ────────► Hono app
-                                         │
-                         ┌───────────────┴────────────────┐
-                         ▼                                ▼
-               TodoRepository effects           AuthService effects
-                         │                                │
-                         ▼                                ▼
-                  TodoRepository                  AuthRepository
-                         │                                │
-                         ├────────────┬───────────────────┤
-                         ▼            ▼                   ▼
-                       memory     shared PGlite       memory auth
-                       / SSG       / Postgres         / portable
-                                     │
-                              Bun + Node runtime
-                                     │
-                                     ▼
-                                 Web Response
+pure renderToString()
+      ↓
+                    delivery policy
+      ┌──────────────────┼────────────────────┐
+      ▼                  ▼                    ▼
+buffered SSR       progressive SSR            SSG
+complete string    Web ReadableStream          complete file
+      │                  │                    │
+      └──────────────────┼────────────────────┘
+                         ▼
+                    Web Response / HTML
+                         │
+              ┌──────────┼──────────┐
+              ▼          ▼          ▼
+             Bun       Node.js   fetch-native
+                         │        edge runtime
+                         ▼
+                @hono/node-server
+
+persistent runtime composition
+      ↓
+shared PGlite/Postgres
+      ├── TodoRepository
+      └── AuthRepository
 
 browser side
       ↓
@@ -3616,6 +4258,8 @@ Query/Cache hydration + DOM bindings + application form/action dataflows
       ↓
 RxJS Subscription-owned execution
 ```
+
+The original M01–M13 implementation roadmap is now complete.
 
 ## Run
 
@@ -3685,13 +4329,21 @@ bun run verify:auth
 
 This verifies the cold auth service, password hashing, opaque session storage, cookie policy, CSRF-protected logout, protected SSR routing, and persistent users/sessions.
 
+### Streaming SSR verification
+
+```sh
+bun run verify:streaming
+```
+
+This proves early shell delivery, ordered RxJS server chunks, final Query/Cache dehydration, cancellation teardown, generic post-start error handling, and buffered reuse of the same streaming route.
+
 ### Static site generation
 
 ```sh
 bun run build:static
 ```
 
-Generated public pages are written under `dist/static/`.
+Generated concrete pages are written under `dist/static/`.
 
 The current automatic static set is:
 
@@ -3701,10 +4353,11 @@ The current automatic static set is:
 /counter
 /login
 /register
+/streaming
 /todos
 ```
 
-`/account/$section` is protected and parameterized, so it is intentionally excluded by M09's automatic static-route rule.
+`/account/$section` is protected and parameterized, so it remains intentionally excluded by M09's automatic static-route rule.
 
 ### Runtime builds and verification
 
@@ -3722,6 +4375,7 @@ GET  /
 GET  /about
 GET  /counter
 GET  /todos
+GET  /streaming
 GET  /login
 GET  /register
 GET  /account/:section
@@ -3733,7 +4387,7 @@ POST /auth/logout
 GET  /auth/session
 ```
 
-The older `/hello/:name` code remains in `src/examples/routes.tsx` as a typed-routing proof for path-derived params and `href()` generation; it is not part of the generated M06–M12 application route tree.
+The older `/hello/:name` code remains in `src/examples/routes.tsx` as a typed-routing proof for path-derived params and `href()` generation; it is not part of the generated M06–M13 application route tree.
 
 ## Development collaboration
 
@@ -3745,4 +4399,4 @@ See [`CONTRIBUTORS.md`](./CONTRIBUTORS.md) for the project contributor list.
 
 ## Architectural rule
 
-The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, `rxjs-router` owns routing semantics, Hono owns HTTP and cookie/redirect boundaries, repository ports own persistence contracts, authentication is resolved server-side before protected routing, runtime composition roots select concrete dependencies, and Bun remains the reference development/build tool rather than framework semantics.
+The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, `rxjs-router` owns routing semantics, Hono owns HTTP and response delivery, repository ports own persistence contracts, authentication is resolved server-side before protected routing, Web Streams own progressive byte transport, runtime composition roots select concrete dependencies, and Bun remains the reference development/build tool rather than framework semantics.

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { stream } from 'hono/streaming';
 
 import { createPbkdf2PasswordHasher, type PasswordHasher } from '../auth/password';
 import { createAuthService } from '../auth/service';
@@ -6,7 +7,8 @@ import type { AuthRepository } from '../database/auth-repository';
 import { createMemoryAuthRepository } from '../database/memory-auth-repository';
 import { createMemoryTodoRepository } from '../database/memory-todos-repository';
 import type { TodoRepository } from '../database/todos-repository';
-import { renderRouteDocument } from '../render/page';
+import { renderRouteResponse } from '../render/page';
+import { writeDocumentStream } from '../render/stream';
 import { routes } from '../routes';
 import { createApi } from './api';
 import { createAuthHttp, resolveRequestAuth } from './auth';
@@ -47,7 +49,7 @@ export const createApp = ({
 
   app.get('*', async (context) => {
     const auth = await resolveRequestAuth(context, authService);
-    const result = await renderRouteDocument({
+    const result = await renderRouteResponse({
       routes,
       request: context.req.raw,
       auth,
@@ -70,6 +72,22 @@ export const createApp = ({
 
     if (result.type === 'error') {
       return context.text('Internal Server Error', 500);
+    }
+
+    if (result.type === 'stream') {
+      context.header('cache-control', 'no-store');
+      context.header('content-encoding', 'Identity');
+      context.header('content-type', 'text/html; charset=UTF-8');
+
+      return stream(context, async (streamingApi) => {
+        await writeDocumentStream({
+          sink: streamingApi,
+          title: result.title,
+          initialBody: result.initialBody,
+          body$: result.body$,
+          jsonScripts: result.jsonScripts,
+        });
+      });
     }
 
     return context.html(result.html);

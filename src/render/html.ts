@@ -121,11 +121,22 @@ const serializeJsonForHtml = (value: unknown): string => {
 const renderJsonScript = ({ id, value }: HtmlJsonScript): string =>
   `<script id="${escapeHtml(id)}" type="application/json">${serializeJsonForHtml(value)}</script>`;
 
+export const renderDocumentPrefix = ({
+  title,
+  body,
+}: Pick<HtmlDocumentOptions, 'title' | 'body'>): string =>
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head><body>${body}`;
+
+export const renderDocumentSuffix = ({
+  jsonScripts = [],
+}: Pick<HtmlDocumentOptions, 'jsonScripts'> = {}): string => {
+  const scripts = jsonScripts.map(renderJsonScript).join('');
+  return `${scripts}</body></html>`;
+};
+
 export const renderDocument = ({
   title,
   body,
   jsonScripts = [],
-}: HtmlDocumentOptions): string => {
-  const scripts = jsonScripts.map(renderJsonScript).join('');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head><body>${body}${scripts}</body></html>`;
-};
+}: HtmlDocumentOptions): string =>
+  `${renderDocumentPrefix({ title, body })}${renderDocumentSuffix({ jsonScripts })}`;

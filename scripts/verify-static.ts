@@ -81,6 +81,19 @@ assert(
   'M09: static /todos bootstrap should contain the Todos query identity.',
 );
 
-console.log('M09 static output verification passed.');
+const streamingFile = `${projectRoot}/${staticOutputPath('/streaming')}`;
+const streamingStaticHtml = await Bun.file(streamingFile).text();
+assert(
+  streamingStaticHtml.includes('id="streaming-shell"') &&
+    streamingStaticHtml.includes('id="streaming-progress"') &&
+    streamingStaticHtml.includes('id="streaming-todos"'),
+  'M13: SSG should buffer all progressive streaming phases into one complete static document.',
+);
+assert(
+  streamingStaticHtml.includes('"queryKey":["todos"]'),
+  'M13: buffered static streaming page should retain final dehydrated Query/Cache state.',
+);
+
+console.log('M09-M13 static output verification passed.');
 
 export {};
