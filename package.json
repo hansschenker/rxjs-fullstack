@@ -6,22 +6,30 @@
   "packageManager": "bun@1.4.0",
   "scripts": {
     "generate:routes": "bun run scripts/generate-routes.ts",
-    "dev": "bun run generate:routes && bun run --hot src/server/bun.ts",
-    "start": "bun run generate:routes && bun run src/server/bun.ts",
+    "dev": "bun run dev:bun",
+    "start": "bun run start:bun",
+    "dev:bun": "bun run generate:routes && bun run --hot src/runtime/bun.ts",
+    "start:bun": "bun run generate:routes && bun run src/runtime/bun.ts",
+    "start:node": "bun run generate:routes && bun run build:node && node dist/runtime/node.js",
     "typecheck": "bun run generate:routes && tsc --noEmit",
     "verify": "bun run generate:routes && bun run scripts/verify.tsx",
     "build:static": "bun run generate:routes && bun run scripts/generate-static.ts",
     "verify:static": "bun run scripts/verify-static.ts",
+    "build:node": "bun build src/runtime/node.ts --outfile dist/runtime/node.js --target node",
+    "build:worker": "bun build src/runtime/cloudflare.ts --outfile dist/runtime/cloudflare.js --target browser",
+    "verify:runtimes": "bun run scripts/verify-runtimes.ts",
     "build:client": "bun build src/examples/counter-client.tsx --outdir dist/client --target browser",
     "build:todos": "bun build src/examples/todos-client.tsx --outdir dist/client --target browser",
-    "check": "bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run scripts/generate-static.ts && bun run scripts/verify-static.ts && bun run build:client && bun run build:todos"
+    "check": "bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run scripts/generate-static.ts && bun run scripts/verify-static.ts && bun run build:node && bun run build:worker && bun run verify:runtimes && bun run build:client && bun run build:todos"
   },
   "dependencies": {
+    "@hono/node-server": "2.1.1",
     "hono": "4.13.3",
     "rxjs": "7.8.2",
     "rxjs-router": "file:../rxjs-router"
   },
   "devDependencies": {
+    "@types/node": "22.20.1",
     "typescript": "5.9.3"
   }
 }
