@@ -217,6 +217,57 @@ assertEqual(
 assertEqual(attributeErrors.length, 1, 'M02: the mount onError hook should receive the attribute error.');
 attrErrorLifetime.unsubscribe();
 
+// M02: live form state binds to DOM properties — value/checked/selected
+// attributes only set a control's default and stop reflecting after the user
+// has interacted with it.
+const value$ = new Subject<string | undefined>();
+const checked$ = new Subject<boolean>();
+const formContainer = document.createElement('div');
+const formLifetime = mount(
+  <div>
+    <input type="text" value={value$} />
+    <input type="checkbox" checked={checked$} />
+  </div>,
+  formContainer,
+);
+const textInput = formContainer.querySelector('input[type="text"]');
+const checkbox = formContainer.querySelector('input[type="checkbox"]');
+assert(textInput instanceof HTMLInputElement, 'M02: the text input should render.');
+assert(checkbox instanceof HTMLInputElement, 'M02: the checkbox should render.');
+
+value$.next('first');
+assertEqual(textInput.value, 'first', 'M02: an Observable value binding should drive the input property.');
+assertEqual(textInput.getAttribute('value'), null, 'M02: live value must bind to the property, not the attribute.');
+
+textInput.value = 'typed by the user';
+value$.next('second');
+assertEqual(textInput.value, 'second', 'M02: value emissions must keep driving the control after user edits.');
+
+value$.next(undefined);
+assertEqual(textInput.value, '', 'M02: clearing the value binding should reset the control.');
+
+checked$.next(true);
+assertEqual(checkbox.checked, true, 'M02: an Observable checked binding should drive the checkbox property.');
+assertEqual(checkbox.getAttribute('checked'), null, 'M02: live checked must bind to the property, not the attribute.');
+checked$.next(false);
+assertEqual(checkbox.checked, false, 'M02: checked emissions should uncheck the control.');
+formLifetime.unsubscribe();
+
+const optionContainer = document.createElement('div');
+const optionLifetime = mount(
+  <select>
+    <option value="a">a</option>
+    <option value="b" selected={true}>
+      b
+    </option>
+  </select>,
+  optionContainer,
+);
+const selectedOption = optionContainer.querySelectorAll('option')[1];
+assert(selectedOption instanceof HTMLOptionElement, 'M02: the option should render.');
+assertEqual(selectedOption.selected, true, 'M02: selected should bind to the option property.');
+optionLifetime.unsubscribe();
+
 // M02/M05: client-side navigation — the router state stream is the live view
 // source, and nav link clicks flow through the dataflow into the router.
 const shell = createTodosShell();

@@ -28,8 +28,40 @@ const reportUnhandledError: ErrorReporter = (error) => {
 const normalizeAttributeName = (name: string): string =>
   name === 'className' ? 'class' : name;
 
+// value/checked/selected attributes only set a control's DEFAULT state; once
+// the user has interacted, the attribute no longer reflects into the control.
+// Live form state therefore binds to the DOM property, not the attribute.
+const setLiveFormProperty = (element: Element, name: string, value: unknown): boolean => {
+  if (
+    name === 'value' &&
+    (element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLSelectElement)
+  ) {
+    element.value =
+      value === undefined || value === null || typeof value === 'boolean' ? '' : String(value);
+    return true;
+  }
+
+  if (name === 'checked' && element instanceof HTMLInputElement) {
+    element.checked = value !== undefined && value !== null && value !== false;
+    return true;
+  }
+
+  if (name === 'selected' && element instanceof HTMLOptionElement) {
+    element.selected = value !== undefined && value !== null && value !== false;
+    return true;
+  }
+
+  return false;
+};
+
 const setElementValue = (element: Element, name: string, value: unknown): void => {
   const attributeName = normalizeAttributeName(name);
+
+  if (setLiveFormProperty(element, attributeName, value)) {
+    return;
+  }
 
   if (value === undefined || value === null || value === false) {
     element.removeAttribute(attributeName);

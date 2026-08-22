@@ -55,6 +55,7 @@ The sibling production install is required because browser bundling follows `rxj
 - **The JSX runtime creates no DOM and owns no lifecycle.** It only creates/normalizes `ViewChild` descriptions.
 - **Cancellation has one owner.** `mount(view, container)` returns the RxJS `Subscription` for the mounted view. Unsubscribing tears down listeners, child subscriptions, live regions, and DOM.
 - **Events flow through Observers; meaning flows through RxJS pipelines.** Renderers forward events and do not interpret them.
+- **Live form state binds to properties.** `value`/`checked`/`selected` are assigned as DOM properties — their attributes only set defaults and stop reflecting after user interaction. Everything else binds as an attribute; the SSR renderer keeps emitting attributes (that is how HTML expresses initial state).
 - **Binding errors fail loudly.** An erroring Observable child or attribute tears its binding down (region cleared, attribute removed) and reports through `mount()`'s `onError` hook (default: rethrown as an unhandled error). Recovery via `catchError` belongs in the application pipeline, never in the renderer.
 - **Keep RxJS operators visible.** Do not rename `map`, `scan`, `switchMap`, `concatMap`, `mergeMap`, or `exhaustMap` merely to give them domain names. Name the user/domain functions passed into them.
 - **Flattening operators are policy.** `mergeMap` allows overlap, `switchMap` keeps latest, `concatMap` queues, and `exhaustMap` ignores while busy. M07 Todo submit intentionally uses `exhaustMap`.

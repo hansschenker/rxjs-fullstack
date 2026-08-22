@@ -62,6 +62,8 @@ DOM events flow into RxJS through `Observer`s:
 
 The renderer only forwards event packages. Application meaning remains in the RxJS pipeline.
 
+Live form state is the one exception to attribute binding: `value`, `checked`, and `selected` are assigned through the DOM property, because their attributes only set a control's default state and stop reflecting once the user has interacted with it. Everything else binds as an attribute.
+
 Errors follow the same ownership rule: recovery belongs in the application dataflow (`catchError`), not in the renderer. If an Observable child or attribute binding errors anyway, the renderer tears the binding down — the live region is cleared, a failed attribute is removed — and reports the error through `mount()`'s optional `onError` hook. By default the error is rethrown as an unhandled error, so failures stay loud instead of freezing stale DOM.
 
 The implementation lives in `src/render/dom.ts`. Its invariants have their own executable verification (`scripts/verify-dom.tsx`), which runs the renderer against a real DOM implementation: events dispatched on rendered elements reach their `Observer`s and drive the counter state machine, every live-region emission tears down the previous child's subscription **before** the replacement renders, replaced children lose their event listeners, unsubscribing the `mount()` Subscription removes the DOM and closes every Observable binding, and erroring bindings clear their region or attribute and reach the `onError` hook.
