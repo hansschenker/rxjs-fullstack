@@ -29,6 +29,7 @@ M04  Hono + Bun server                             ✅
 M05  Strongly typed routing + Query/Cache         ✅
 M06  File-based route discovery                   ✅
 M07  Forms + RxJS server actions                  ✅
+M08  SSR Query Prefetch / Client Data Continuity  ✅
 ```
 
 ## M01 — TypeScript JSX runtime
@@ -759,7 +760,346 @@ A future login form, checkout command, settings save, file metadata update, or d
 
 That is the larger M07 result: **server actions are not a new execution model added beside RxJS; they are one more effect that participates in the existing RxJS machine.**
 
-## What M01–M07 establish
+## M08 — SSR Query Prefetch / Client Data Continuity
+
+M08 closes the read-side discontinuity that remained after M05–M07.
+
+Before M08, `/todos` had two separate starts:
+
+```text
+server request                     browser mount
+     ↓                                  ↓
+SSR route                           TodoApp subscribes
+     ↓                                  ↓
+"Loading todos..."                 Query/Cache is empty
+                                        ↓
+                                   GET /api/todos
+                                        ↓
+                                   render Todos
+```
+
+The server knew how to render the page shell, and the browser knew how to fetch Todos, but server-resolved data was not carried across the HTML boundary. The browser therefore had to cold-start the same read again.
+
+M08 changes that flow to:
+
+```text
+HTTP GET /todos
+      ↓
+request-scoped QueryClient
+      ↓
+rxjs-router loader
+      ↓
+queryClient.query$(todosQuery)
+      ↓
+in-process GET /api/todos
+      ↓
+readonly Todo[]
+      ↓
+Query/Cache
+      ├──────────────► static SSR Todo snapshot
+      │
+      └──────────────► dehydrate()
+                         ↓
+                  application/json bootstrap state
+                         ↓
+                       HTML
+                         ↓
+browser entry reads state before mount
+      ↓
+hydrate(queryClient, state)
+      ↓
+TodoApp subscribes to the same query key
+      ↓
+fresh cached Todos emit immediately
+```
+
+The important result is not merely that the server can fetch Todos. The important result is **continuity of the same query state across the server/browser boundary**.
+
+### The QueryClient is request-scoped on the server
+
+The server must never reuse one application-wide QueryClient across users or requests. M08 therefore creates a new QueryClient inside each Hono page request:
+
+```ts
+const queryClient = new QueryClient();
+```
+
+That client is passed into `rxjs-router` through its explicit route context:
+
+```ts
+resolveRequest({
+  routes,
+  request,
+  context: {
+    queryClient,
+    fetch: routeFetch,
+  },
+});
+```
+
+This preserves the route architecture established in M06. Hono does not gain a special `if (pathname === '/todos')` prefetch branch. The route loader declares the data it needs; Hono only supplies request infrastructure.
+
+Request isolation is therefore:
+
+```text
+request A ──► QueryClient A ──► dehydrate A ──► response A
+request B ──► QueryClient B ──► dehydrate B ──► response B
+```
+
+No query state crosses between requests unless an application later introduces an explicit shared server cache.
+
+### The Todos route owns its SSR query requirement
+
+`src/routes/todos.tsx` now uses the QueryClient from router context while resolving the page.
+
+The server loader subscribes to:
+
+```ts
+context.queryClient.query$(createTodosQuery(context.fetch))
+```
+
+and waits until the query has either data or an error before creating the pure SSR view.
+
+The route request `AbortSignal` is connected with `takeUntil(...)`. If the request is cancelled while the query is active, the route subscription is torn down rather than leaving a detached page-read subscription running.
+
+Conceptually:
+
+```text
+route request signal ───────────────┐
+                                    │
+query$ ── loading ── data ── ...    │
+  │                                 │
+  └──────── takeUntil(abort) ◄──────┘
+```
+
+The request controls the lifetime of the server read.
+
+### Server and browser use the same query identity
+
+M08 keeps the existing query key:
+
+```ts
+['todos']
+```
+
+`createTodosQuery(fetcher)` makes only the transport replaceable. The browser uses the normal Web `fetch`; the server receives an in-process Hono fetch adapter.
+
+The query contract remains:
+
+```text
+query key        ['todos']
+result           readonly Todo[]
+HTTP contract    GET /api/todos
+```
+
+The server adapter resolves `/api/todos` through the same Hono application without performing a real network round-trip. This is important because M08 does not introduce a second Todo read implementation just for SSR.
+
+The transport can change; the query identity and data package do not.
+
+### SSR renders resolved data, not an Observable
+
+M03's renderer rule remains unchanged: `renderToString()` never subscribes.
+
+M08 resolves the query before rendering and then builds a static `TodoSnapshot` from the resulting `readonly Todo[]`:
+
+```text
+query$ subscription
+      ↓
+readonly Todo[]
+      ↓
+TodoSnapshot
+      ↓
+ViewChild containing plain values
+      ↓
+renderToString()
+```
+
+The SSR renderer still receives no live Observable child.
+
+This means M08 extends SSR without weakening the M03 boundary. Asynchronous execution remains outside the pure HTML renderer.
+
+### Query state is dehydrated into the HTML document
+
+After routing has finished, the request-scoped QueryClient contains the successful Todos query. The server calls:
+
+```ts
+dehydrate(queryClient)
+```
+
+and emits the result into a JSON bootstrap script:
+
+```html
+<script id="rxjs-query-state" type="application/json">...</script>
+```
+
+`renderDocument()` now supports generic JSON bootstrap scripts and performs HTML-safe JSON escaping. In particular, `<`, `>`, and `&` are encoded so query data cannot accidentally terminate the script element and become executable HTML.
+
+The bootstrap element is data, not JavaScript code. No query logic is embedded in the document.
+
+### The browser restores Query/Cache before TodoApp subscribes
+
+`src/examples/todos-client.tsx` now performs the bootstrap in this order:
+
+```text
+find #app
+   ↓
+read #rxjs-query-state
+   ↓
+JSON.parse
+   ↓
+hydrate(queryClient, state)
+   ↓
+mount(TodoApp)
+   ↓
+TodoApp subscribes to queryClient.query$(todosQuery)
+```
+
+The ordering is essential.
+
+If `TodoApp` subscribed first, its empty client QueryClient could begin a browser fetch before the server state was restored. Hydrating first means the first browser subscription sees the server-populated cache.
+
+The helper `hydrateQueryClientFromDocument()` performs only this bootstrap boundary. It does not mount UI or choose query behavior.
+
+### Freshness policy prevents the immediate second cold fetch
+
+Hydration alone is not enough.
+
+A query with `staleTime: 0` is stale immediately. The client could correctly restore the server value and then immediately refetch it because the normal query policy says the data is stale.
+
+M08 therefore makes freshness explicit for Todos:
+
+```ts
+staleTime: 30_000
+```
+
+The temporal behavior is now:
+
+```text
+time ─────────────────────────────────────────────►
+
+server fetch       ● data resolved
+                   │
+HTML response      │──── dehydrated state ────►
+                   │
+browser hydrate    ● same data restored
+                   │<------ 30s fresh ------->│
+client subscribe   ● cached data emits
+                   │
+                   └── no immediate GET /api/todos
+```
+
+After the freshness window expires, ordinary Query/Cache rules apply again. M08 does not disable refetching; it prevents an unnecessary duplicate read during the initial server-to-browser handoff.
+
+### M08 is data hydration, not DOM hydration
+
+The word "hydrate" here refers specifically to **Query/Cache state**.
+
+The current DOM renderer's `mount()` still owns its container and calls `replaceChildren()`. When the browser client mounts, it may replace the static SSR snapshot with the live RxJS view.
+
+That is deliberately outside the M08 claim.
+
+M08 guarantees:
+
+```text
+server query state ──► browser query state
+```
+
+It does not yet claim:
+
+```text
+server DOM nodes ──► attach bindings in place
+```
+
+Keeping those two problems separate makes the architecture easier to reason about. Query-state continuity can be verified independently of a future DOM-hydration strategy.
+
+### M08 source map
+
+```text
+src/queries/todos.ts
+  createTodosQuery(fetcher)
+  shared ['todos'] identity
+  explicit staleTime freshness policy
+
+src/server/route-context.ts
+  request-scoped QueryClient + in-process fetch contract
+
+src/routes/todos.tsx
+  SSR query subscription
+  request cancellation with takeUntil
+  static TodoSnapshot construction
+
+src/examples/todos.tsx
+  shared TodoList
+  static TodoSnapshot
+  live TodoApp
+
+src/query/ssr.ts
+  QUERY_STATE_SCRIPT_ID
+  hydrateQueryClientFromDocument()
+
+src/render/html.ts
+  generic application/json bootstrap scripts
+  HTML-safe JSON serialization
+
+src/server/app.tsx
+  request-scoped QueryClient
+  router context
+  dehydrate() at the HTTP/HTML boundary
+
+src/examples/todos-client.tsx
+  restore cache before mount
+```
+
+Each file owns one piece of the handoff rather than hiding the complete process behind a new framework lifecycle.
+
+### M08 verification
+
+`scripts/verify.tsx` now checks the continuity contract directly:
+
+- `/todos` SSR contains actual seeded Todo data,
+- `/todos` SSR no longer contains the `Loading todos...` placeholder,
+- the HTML contains the `rxjs-query-state` bootstrap element,
+- a server QueryClient executes a test query exactly once,
+- that QueryClient can be dehydrated,
+- a fresh browser QueryClient can restore the serialized state,
+- the browser query emits the server value after hydration,
+- the browser query function is **not executed** while the hydrated data remains fresh,
+- TypeScript and both browser bundles still build through the normal `bun run check` pipeline.
+
+The most important executable assertion is:
+
+```text
+server query executions   = 1
+browser query executions  = 0
+browser observed value    = server value
+```
+
+That is the concrete M08 definition of client data continuity.
+
+### What M08 establishes
+
+M08 adds a reusable server/browser read path:
+
+```text
+route declares query
+      ↓
+server subscribes
+      ↓
+request QueryClient remembers result
+      ↓
+SSR consumes resolved data
+      ↓
+QueryClient dehydrates into HTML
+      ↓
+browser QueryClient hydrates before subscription
+      ↓
+normal RxJS Query/Cache execution continues
+```
+
+The server and browser are no longer two unrelated executions that happen to request the same endpoint. They are two phases of one query lifecycle separated by an HTML transport boundary.
+
+The broader principle is: **SSR may resolve the first value, but Query/Cache remains the state machine that owns the read across the boundary.**
+
+## What M01–M08 establish
 
 ```text
 M01  JSX is a typed description of a view.
@@ -769,6 +1109,7 @@ M04  HTTP and runtime remain thin boundaries.
 M05  Routing and Query/Cache provide application infrastructure.
 M06  Route modules are discovered without central registration.
 M07  Forms drive typed, lazy, cancellable RxJS server actions.
+M08  Server-resolved query state continues into browser Query/Cache.
 ```
 
 The current architecture is:
@@ -782,7 +1123,9 @@ RxJS DOM bindings / pure SSR renderer
       ↓
 file-discovered rxjs-router tree
       ↓
-Query/Cache + form/action dataflows
+request-scoped SSR Query/Cache ──dehydrate/hydrate──► browser Query/Cache
+      ↓
+form/action dataflows
       ↓
 Hono HTTP boundary
       ↓
@@ -815,7 +1158,7 @@ GET  /api/todos
 POST /api/actions/todos.create
 ```
 
-The older `/hello/:name` code remains in `src/examples/routes.tsx` as a typed-routing proof for path-derived params and `href()` generation; it is not part of the generated M06/M07 application route tree.
+The older `/hello/:name` code remains in `src/examples/routes.tsx` as a typed-routing proof for path-derived params and `href()` generation; it is not part of the generated M06–M08 application route tree.
 
 ## Development collaboration
 
