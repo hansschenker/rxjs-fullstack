@@ -1,4 +1,10 @@
-import { firstValueFrom, map, toArray, type Observable } from 'rxjs';
+import {
+  firstValueFrom,
+  map,
+  timeout,
+  toArray,
+  type Observable,
+} from 'rxjs';
 import { resolveRequest, type AnyRoute } from 'rxjs-router';
 
 import type { ResolvedAuthSession } from '../auth/types';
@@ -14,6 +20,8 @@ import {
   renderToString,
   type HtmlJsonScript,
 } from './html';
+
+export const BUFFERED_STREAM_TIMEOUT_MS = 30_000;
 
 export type RouteDocumentResult =
   | {
@@ -125,7 +133,11 @@ const renderBufferedPage = async (
 
     if (page.stream$) {
       const streamedBody = await firstValueFrom(
-        page.stream$.pipe(map(renderToString), toArray()),
+        page.stream$.pipe(
+          map(renderToString),
+          toArray(),
+          timeout({ first: BUFFERED_STREAM_TIMEOUT_MS }),
+        ),
       );
       body += streamedBody.join('');
     }
