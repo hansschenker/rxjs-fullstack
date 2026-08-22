@@ -62,7 +62,7 @@ DOM events flow into RxJS through `Observer`s:
 
 The renderer only forwards event packages. Application meaning remains in the RxJS pipeline.
 
-The implementation lives in `src/render/dom.ts`.
+The implementation lives in `src/render/dom.ts`. Its invariants have their own executable verification (`scripts/verify-dom.tsx`), which runs the renderer against a real DOM implementation: events dispatched on rendered elements reach their `Observer`s and drive the counter state machine, every live-region emission tears down the previous child's subscription **before** the replacement renders, replaced children lose their event listeners, and unsubscribing the `mount()` Subscription removes the DOM and closes every Observable binding.
 
 ## M03 — Pure HTML renderer and SSR
 
