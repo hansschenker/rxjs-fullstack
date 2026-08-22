@@ -7,7 +7,11 @@ const AuthNav = (): ViewChild => (
   </nav>
 );
 
-export const LoginPage = ({ message }: { readonly message?: string }): ViewChild => (
+export const LoginPage = ({
+  message,
+}: {
+  readonly message: string | undefined;
+}): ViewChild => (
   <main>
     <h1>RxJS Fullstack Login</h1>
     <AuthNav />
@@ -37,7 +41,11 @@ export const LoginPage = ({ message }: { readonly message?: string }): ViewChild
   </main>
 );
 
-export const RegisterPage = ({ message }: { readonly message?: string }): ViewChild => (
+export const RegisterPage = ({
+  message,
+}: {
+  readonly message: string | undefined;
+}): ViewChild => (
   <main>
     <h1>RxJS Fullstack Register</h1>
     <AuthNav />
@@ -70,7 +78,7 @@ export const RegisterPage = ({ message }: { readonly message?: string }): ViewCh
 export interface AccountPageProps {
   readonly user: AuthUser;
   readonly section: string;
-  readonly csrfToken?: string;
+  readonly csrfToken: string | undefined;
 }
 
 export const AccountPage = ({
