@@ -1,11 +1,13 @@
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
-import { Observable, Subject } from 'rxjs';
+import { Observable, Subject, filter, firstValueFrom } from 'rxjs';
 
 import { Counter } from '../src/examples/counter';
 import { Fragment, jsx, type ViewChild } from '../src/jsx/runtime';
 import { mount } from '../src/render/dom';
 
-GlobalRegistrator.register();
+GlobalRegistrator.register({ url: 'http://localhost:3100/' });
+
+const { createTodosShell } = await import('../src/examples/todos-shell');
 
 const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
@@ -150,5 +152,40 @@ assertEqual(paragraph.getAttribute('class'), 'muted', 'M02: attribute bindings s
 
 attributeLifetime.unsubscribe();
 assertEqual(class$.observed, false, 'M02: unmounting must unsubscribe attribute bindings.');
+
+// M02/M05: client-side navigation — the router state stream is the live view
+// source, and nav link clicks flow through the dataflow into the router.
+const shell = createTodosShell();
+const shellContainer = document.createElement('div');
+const shellLifetime = mount(shell.view, shellContainer);
+shellLifetime.add(shell.navigation$.subscribe());
+
+await firstValueFrom(shell.router.state$.pipe(filter((state) => state.status === 'success')));
+assertEqual(
+  shellContainer.querySelector('h1')?.textContent,
+  'RxJS Fullstack',
+  'Navigation: the shell should render the home route from the initial location.',
+);
+
+const aboutLink = Array.from(shellContainer.querySelectorAll('a')).find(
+  (anchor) => anchor.getAttribute('href') === '/about',
+);
+assert(aboutLink !== undefined, 'Navigation: the shell should render an /about nav link.');
+aboutLink.dispatchEvent(new Event('click', { cancelable: true }));
+
+await firstValueFrom(
+  shell.router.state$.pipe(
+    filter((state) => state.status === 'success' && state.location.pathname === '/about'),
+  ),
+);
+assertEqual(
+  shellContainer.querySelector('h1')?.textContent,
+  'About RxJS Fullstack',
+  'Navigation: clicking a nav link should swap the routed view client-side.',
+);
+assertEqual(document.title, 'RxJS Fullstack About', 'Navigation: the page title should follow the route.');
+
+shellLifetime.unsubscribe();
+assertEqual(shellContainer.innerHTML, '', 'Navigation: unmounting the shell must clear its DOM.');
 
 console.log('M02 DOM renderer verification passed.');

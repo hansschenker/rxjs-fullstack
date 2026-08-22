@@ -4305,7 +4305,7 @@ DATABASE_PATH=./data/dev-postgres bun run dev:bun
 bun run dev:todos
 ```
 
-This builds `dist/client/todos-client.js` and serves it on `http://localhost:3100` from a minimal mount page, with the same Hono application handling `/api` and `/api/actions` on that origin. The sample mounts `TodoApp` with the M02 DOM renderer and drives its data through the M05 Query/Cache layer and the M07 create-todo server action.
+This builds `dist/client/todos-client.js` and serves it on `http://localhost:3100` from a minimal mount page, with the same Hono application handling `/api` and `/api/actions` on that origin. The sample mounts a router-driven shell (`src/examples/todos-shell.tsx`): `router.state$` is the live view source, and nav link clicks flow through an RxJS dataflow into `router.navigateHref()`, so Home, About, Counter, Todos, and Hello navigate client-side without page reloads. The Todos page drives its data through the M05 Query/Cache layer and the M07 create-todo server action. The harness serves the mount page on those page routes too, so deep links and reloads stay in the client app.
 
 ### Node.js runtime
 

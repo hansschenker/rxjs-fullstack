@@ -1,9 +1,7 @@
-import { of } from 'rxjs';
-
-import { Fragment, jsx } from '../jsx/runtime';
 import { hydrateQueryClientFromDocument } from '../query';
 import { mount } from '../render/dom';
-import { TodoApp, queryClient } from './todos';
+import { queryClient } from './todos';
+import { createTodosShell } from './todos-shell';
 
 const root = document.querySelector('#app');
 
@@ -13,5 +11,7 @@ if (!(root instanceof Element)) {
 
 hydrateQueryClientFromDocument(queryClient, document);
 
-const lifetime = mount(of(<TodoApp />), root);
+const shell = createTodosShell();
+const lifetime = mount(shell.view, root);
+lifetime.add(shell.navigation$.subscribe());
 window.addEventListener('pagehide', () => lifetime.unsubscribe(), { once: true });

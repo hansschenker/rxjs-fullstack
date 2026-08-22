@@ -459,5 +459,11 @@ assertEqual(
   200,
   'Todos sample: the harness should expose the todos API on the same origin.',
 );
+const todosSampleDeepLink = await todosSampleApp.request('/todos');
+const todosSampleDeepLinkHtml = await todosSampleDeepLink.text();
+assert(
+  todosSampleDeepLinkHtml.includes('src="/client/todos-client.js"'),
+  'Todos sample: page routes should serve the client mount page so deep links stay in the client app.',
+);
 
 console.log('M01-M13 verification passed.');

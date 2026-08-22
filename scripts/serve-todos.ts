@@ -36,10 +36,14 @@ const samplePage =
  * client bundle, and forwards everything else (the /api and /api/actions
  * endpoints the sample talks to, plus the SSR pages) to the real Hono app.
  */
+const SAMPLE_PAGE_PATHS = ['/', '/about', '/counter', '/todos', '/hello/:name'] as const;
+
 export const createTodosSampleApp = (): Hono => {
   const sample = new Hono();
 
-  sample.get('/', (context) => context.html(samplePage));
+  for (const path of SAMPLE_PAGE_PATHS) {
+    sample.get(path, (context) => context.html(samplePage));
+  }
 
   sample.get('/client/todos-client.js', async (context) => {
     const source = await readFile(clientBundlePath, 'utf8').catch(() => undefined);

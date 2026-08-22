@@ -30,7 +30,7 @@ M07 shared action references and the browser action transport live in `src/actio
 - `bun run typecheck` — regenerate routes and run `tsc --noEmit`.
 - `bun run dev` — regenerate routes, then start the hot-reload dev server on port 3000.
 - `bun run build:todos` — bundle the browser Todos sample.
-- `bun run dev:todos` — build the browser Todos sample and serve it on `http://localhost:3100`.
+- `bun run dev:todos` — build the browser Todos sample (router-driven shell with client-side navigation) and serve it on `http://localhost:3100`.
 
 ## CI environment setup
 
