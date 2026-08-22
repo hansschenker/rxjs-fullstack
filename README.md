@@ -33,6 +33,7 @@ M07  Forms + RxJS server actions                  ✅
 M08  SSR Query Prefetch / Client Data Continuity  ✅
 M09  Static Site Generation                       ✅
 M10  Runtime Adapters                             ✅
+M11  Database Integration                         ✅
 ```
 
 ## M01 — TypeScript JSX runtime
@@ -2015,7 +2016,727 @@ application chooses dataflow policy
 
 That is the larger M10 result: **Bun, Node.js, and fetch-native edge runtimes are hosts around the same RxJS Fullstack machine, not separate versions of the framework.**
 
-## What M01–M10 establish
+## M11 — Database Integration
+
+M11 replaces the process-local Todo array with an explicit persistence boundary while preserving the RxJS Fullstack machine built in M01–M10.
+
+The database is deliberately treated as another effect dependency. It does not become a new state-management system, router, action mechanism, or rendering lifecycle.
+
+Before M11, the server-side Todo source of truth was a module-local array:
+
+```text
+GET /api/todos ─────────────► in-process Todo[]
+
+server action ──────────────► addTodo()
+                                  ↓
+                            in-process Todo[]
+```
+
+M11 changes the persistence boundary to:
+
+```text
+                           TodoRepository
+                          /              \
+                         /                \
+                        ▼                  ▼
+              memory repository       PGlite/Postgres
+              tests / portable        Bun / Node
+              compositions            persistent host
+```
+
+The application sees only the repository contract. The composition root decides which implementation supplies the effect.
+
+The central M11 rule is: **persistence changes where Todo data is stored; it does not change how values move through RxJS Fullstack.**
+
+### The repository is a typed effect port
+
+The application-facing database contract lives in:
+
+```text
+src/database/todos-repository.ts
+```
+
+Its essential shape is:
+
+```ts
+interface TodoRepository {
+  list$(options?): Observable<readonly Todo[]>;
+  create$(input, options?): Observable<Todo>;
+  close(): Promise<void>;
+}
+```
+
+This contract says what packages move through the persistence boundary:
+
+```text
+list$    : ()              → Observable<readonly Todo[]>
+create$  : CreateTodoInput → Observable<Todo>
+```
+
+It deliberately does not expose:
+
+- PGlite objects,
+- SQL result objects,
+- Hono contexts,
+- QueryClient,
+- browser state,
+- server-action references,
+- runtime-specific APIs.
+
+The database adapter knows persistence. The rest of the framework continues to know only domain values and Observables.
+
+### Database reads and writes remain cold
+
+Repository operations are descriptions until subscribed.
+
+For a write:
+
+```text
+const save$ = repository.create$(input)
+        │
+        │ no subscription
+        ▼
+      no SQL
+
+subscribe
+   ↓
+INSERT starts
+   ↓
+Todo emitted
+   ↓
+complete
+```
+
+Both the memory repository and the PGlite repository implement read/write operations with `defer(...)`.
+
+This means constructing a database Observable does not eagerly perform the database effect. The same RxJS execution rule that applies to HTTP actions and other effects now applies to persistence.
+
+### Repository initialization is intentionally different from repository operations
+
+M11 separates two lifetimes that should not be confused.
+
+Repository initialization belongs to the composition root:
+
+```text
+process starts
+    ↓
+open database
+    ↓
+apply migrations
+    ↓
+seed if empty
+    ↓
+construct application
+    ↓
+start accepting requests
+```
+
+Individual reads and writes remain cold:
+
+```text
+request arrives
+    ↓
+repository.list$() or repository.create$()
+    ↓
+Observable description
+    ↓
+subscription at the HTTP/action boundary
+    ↓
+SQL executes
+```
+
+Opening the database and making the schema ready before the server accepts traffic is intentional. Laziness applies to application database effects, not to pretending that a server can use an unopened database.
+
+### PGlite is the reference Postgres adapter
+
+M11 uses PGlite as the reference embedded Postgres implementation for Bun and Node.js.
+
+The adapter lives in:
+
+```text
+src/database/pglite-todos-repository.ts
+```
+
+The important architectural choice is not that every `rxjs-fullstack` application must use PGlite. It is that a concrete Postgres-compatible database can satisfy the same `TodoRepository` port without leaking database-specific APIs upward.
+
+The current persistent composition is:
+
+```text
+Bun / Node process
+      ↓
+createPgliteTodoRepository()
+      ↓
+TodoRepository
+      ↓
+createApp({ todosRepository })
+      ↓
+Hono / RxJS Fullstack
+```
+
+A later PostgreSQL server, SQLite adapter, remote database service, or application-specific persistence layer can implement the same role without changing the browser query/action machine.
+
+### SQL stays visible
+
+M11 deliberately does not add an ORM.
+
+The Todo read is conceptually:
+
+```sql
+SELECT id, title, done
+FROM todos
+ORDER BY id
+```
+
+The write is a parameterized statement:
+
+```sql
+INSERT INTO todos (title, done)
+VALUES ($1, FALSE)
+RETURNING id, title, done
+```
+
+The domain value is passed separately from the SQL text:
+
+```text
+CreateTodoInput.title
+       ↓
+parameter $1
+       ↓
+Postgres insert
+       ↓
+Todo row
+       ↓
+Todo
+```
+
+Keeping SQL explicit matches the rest of the project: mechanisms remain visible rather than being renamed or hidden behind domain-sounding wrappers.
+
+### Schema changes are versioned migrations
+
+The database adapter does not assume that the schema already exists.
+
+M11 adds a migration ledger:
+
+```text
+rxjs_fullstack_migrations
+```
+
+The first application migration is:
+
+```text
+version 1 — create_todos
+```
+
+which creates:
+
+```text
+todos
+├── id    SERIAL PRIMARY KEY
+├── title TEXT NOT NULL
+└── done  BOOLEAN NOT NULL DEFAULT FALSE
+```
+
+Initialization proceeds as:
+
+```text
+open PGlite
+    ↓
+ensure migration ledger exists
+    ↓
+read applied versions
+    ↓
+for each unapplied migration
+    ↓
+transaction
+   ├── apply SQL
+   └── record version/name
+```
+
+The schema history is therefore explicit and repeatable instead of being inferred from application objects at runtime.
+
+### Seed data is idempotent
+
+The two canonical Todo examples remain useful as the initial project dataset.
+
+M11 moves them into a shared seed definition and inserts them only when the Todo table is empty.
+
+```text
+fresh database
+    ↓
+COUNT(*) = 0
+    ↓
+insert canonical seed rows
+
+reopened database
+    ↓
+COUNT(*) > 0
+    ↓
+do not seed again
+```
+
+This matters because persistence must survive restart without duplicating the example data every time the application boots.
+
+### The old array store disappears from the active architecture
+
+M07's historical chapter documents the original `src/server/todos-store.ts` because that was the implementation at that milestone.
+
+M11 removes that file from the current source tree.
+
+The transition is:
+
+```text
+M07–M10
+server/api.ts
+    ↓
+todos-store.ts
+    ↓
+module-local array
+
+M11
+server/api.ts
+    ↓
+TodoRepository
+    ↓
+selected repository adapter
+```
+
+The historical README remains intact, but the current application no longer imports a persistence implementation directly from the server API.
+
+### `createApi()` receives persistence instead of importing it
+
+The API boundary is now constructed with:
+
+```ts
+createApi({ todosRepository })
+```
+
+The read path becomes:
+
+```text
+GET /api/todos
+      ↓
+todosRepository.list$({ signal })
+      ↓
+firstValueFrom(...)
+      ↓
+readonly Todo[]
+      ↓
+JSON Response
+```
+
+The write path becomes:
+
+```text
+POST /api/actions/todos.create
+      ↓
+server-action validation
+      ↓
+todosRepository.create$(input, { signal })
+      ↓
+Todo
+      ↓
+HTTP 201
+```
+
+Hono still owns HTTP. The repository owns persistence. RxJS still describes the effect.
+
+### `createApp()` becomes the application composition boundary
+
+M11 adds dependency injection at the application root:
+
+```ts
+createApp({ todosRepository })
+```
+
+This prevents the Hono application from choosing a database internally.
+
+The composition options are now explicit:
+
+```text
+createApp(memoryRepository)
+        │
+        ├── deterministic verifier
+        ├── SSG process
+        └── fetch-native portable composition
+
+createApp(pgliteRepository)
+        │
+        ├── Bun server
+        └── Node.js server
+```
+
+The default exported `app` remains backed by the deterministic memory repository. That keeps framework verification, static generation, and the fetch-native M10 proof independent of filesystem/database-runtime requirements.
+
+Persistent runtime entry points deliberately inject PGlite themselves.
+
+### Bun and Node are database composition roots
+
+M10 established that runtime adapters should only host an application. M11 preserves that principle by separating the generic host adapter from the database-aware process entry.
+
+For Bun:
+
+```text
+src/runtime/bun-server.ts
+      ↓
+open PGlite
+      ↓
+createApp({ todosRepository })
+      ↓
+createBunServerOptions(..., app.fetch)
+      ↓
+Bun hosts fetch
+```
+
+For Node:
+
+```text
+src/runtime/node.ts
+      ↓
+open PGlite
+      ↓
+createApp({ todosRepository })
+      ↓
+createNodeServer({ fetch: app.fetch })
+      ↓
+@hono/node-server
+      ↓
+Node HTTP server
+```
+
+The generic `src/runtime/bun.ts` and `src/runtime/node-adapter.ts` remain host adapters. They now accept an injected fetch handler instead of selecting persistence themselves.
+
+This keeps the dependency direction correct:
+
+```text
+runtime composition root
+    ↓ chooses
+repository implementation
+    ↓ injected into
+application
+    ↓ hosted by
+runtime adapter
+```
+
+### Persistent data has an explicit location
+
+The reference Bun/Node database defaults to:
+
+```text
+./.rxjs-fullstack-db
+```
+
+That path is excluded from Git.
+
+Deployments and local development can choose another location with:
+
+```text
+DATABASE_PATH=/path/to/database
+```
+
+For example:
+
+```sh
+DATABASE_PATH=./data/dev-postgres bun run dev:bun
+```
+
+The database path is process/deployment configuration, not a route or domain concern.
+
+### M11 preserves M08 Query/Cache semantics
+
+The browser query has not been rewritten to know about SQL.
+
+The read dataflow remains:
+
+```text
+TodoApp subscription
+      ↓
+queryClient.query$(todosQuery)
+      ↓
+GET /api/todos
+      ↓
+TodoRepository.list$()
+      ↓
+PGlite SELECT
+      ↓
+readonly Todo[]
+      ↓
+HTTP JSON
+      ↓
+Query/Cache
+      ↓
+view
+```
+
+The browser still sees the same query key and the same `readonly Todo[]` package.
+
+M11 changes the server source of truth behind the existing HTTP/query contract; it does not make Query/Cache a database abstraction.
+
+### M11 preserves M07 server-action semantics
+
+The create path also keeps its existing temporal policy:
+
+```text
+form submit
+    ↓
+exhaustMap
+    ↓
+createTodo$()
+    ↓
+server action
+    ↓
+TodoRepository.create$()
+    ↓
+PGlite INSERT
+    ↓
+Todo
+    ↓
+invalidate ['todos']
+    ↓
+GET /api/todos
+    ↓
+PGlite SELECT
+```
+
+`exhaustMap` still means **ignore while busy**. `concatMap` still sequences post-write query invalidation. The database adapter does not choose either policy.
+
+The important transition is only:
+
+```text
+old write target   module-local array
+new write target   persistent repository
+```
+
+### Cancellation is explicit, with a precise boundary
+
+Database repository methods accept the request `AbortSignal`.
+
+Before starting each SQL operation, the adapter checks:
+
+```text
+signal.aborted?
+    ├── yes → error before SQL starts
+    └── no  → execute SQL
+```
+
+This means a request cancelled before the database effect begins does not start that effect.
+
+The current PGlite repository does **not** claim that unsubscribing can forcibly cancel a SQL statement that has already entered PGlite. Once the Promise-backed query has started, RxJS can stop downstream ownership, but this adapter has no mid-query database cancellation primitive to invoke.
+
+That distinction is intentional and documented:
+
+```text
+before SQL begins       AbortSignal can prevent start
+already-running SQL     no forced PGlite cancellation claimed
+```
+
+M11 therefore keeps cancellation explicit without promising a capability the database adapter does not provide.
+
+### PGlite process behavior is contained at the adapter boundary
+
+During verification, PGlite's Emscripten runtime exposed an integration detail: database initialization/close could leave the host process `exitCode` changed even though all application assertions had succeeded.
+
+M11 contains that behavior inside the PGlite adapter by preserving the surrounding process exit verdict around create/close.
+
+The rule is the same architectural rule used elsewhere:
+
+```text
+library/runtime implementation detail
+          ↓
+contained by adapter
+          ↓
+application process semantics remain stable
+```
+
+The verifier includes an assertion protecting this boundary so a successful database run cannot silently turn into a failing host process.
+
+### Node bundling keeps PGlite's runtime assets external
+
+The Node application bundle is built with PGlite externalized:
+
+```text
+bun build src/runtime/node.ts
+  --target node
+  --external @electric-sql/pglite
+```
+
+This keeps PGlite's package/runtime assets available from the installed dependency rather than trying to collapse the database runtime into the single application bundle.
+
+At the same time, the fetch-native edge build still targets the browser/edge graph and does not import the filesystem-backed PGlite composition root.
+
+This preserves M10's dependency-boundary test:
+
+```text
+filesystem database adapter
+        │
+        ├── Bun / Node composition roots
+        │
+        └── not required by portable worker app.fetch graph
+```
+
+### Persistence survives process-style reopen
+
+M11 verifies actual filesystem persistence, not just a database call that succeeds once.
+
+The proof is:
+
+```text
+create filesystem PGlite repository
+      ↓
+insert Todo
+      ↓
+close repository
+      ↓
+open a new repository at same path
+      ↓
+SELECT todos
+      ↓
+created Todo is still present
+```
+
+It also verifies that reopening does not duplicate seed data.
+
+This is the point where the Todos vertical slice gains a persistent source of truth rather than process lifetime state.
+
+### M11 source map
+
+```text
+src/database/todos-repository.ts
+  TodoRepository port
+  RepositoryOperationOptions
+  abort-before-start guard
+
+src/database/todos-seed.ts
+  canonical seed data
+
+src/database/memory-todos-repository.ts
+  deterministic cold repository
+  tests / SSG / portable composition
+
+src/database/migrations.ts
+  versioned database migration definitions
+
+src/database/pglite-todos-repository.ts
+  embedded Postgres adapter
+  migration runner
+  seed runner
+  parameterized SQL
+  process-exit-state containment
+
+src/server/api.ts
+  repository-injected GET /todos
+  repository-injected create server action
+
+src/server/app.tsx
+  createApp({ todosRepository })
+  default deterministic memory composition
+
+src/runtime/bun.ts
+  generic Bun host accepting fetch injection
+
+src/runtime/bun-server.ts
+  persistent Bun composition root
+  PGlite + createApp + Bun host
+
+src/runtime/node-adapter.ts
+  generic Node host accepting fetch injection
+
+src/runtime/node.ts
+  persistent Node composition root
+  PGlite + createApp + Node host
+
+scripts/verify-database.ts
+  coldness
+  migration/seed
+  filesystem persistence
+  API/action database integration
+  process-exit isolation
+
+scripts/verify-runtimes.ts
+  real Node process with temporary DATABASE_PATH
+  database-backed runtime assertion
+```
+
+### M11 verification
+
+M11 adds a dedicated database verifier and extends the runtime verifier.
+
+The database verification proves that:
+
+- constructing a repository write Observable does not perform the write,
+- subscribing executes exactly the described repository effect,
+- a fresh PGlite database receives the expected schema and two seed Todos,
+- a PGlite insert is also cold before subscription,
+- the insert returns the generated Todo id,
+- closing and reopening the filesystem-backed database preserves that Todo,
+- migrations and seed initialization are idempotent across reopen,
+- a Hono application injected with the PGlite repository reads through the database,
+- the existing `todos.create` server action writes through the database,
+- the existing GET/query path sees the committed server-action write,
+- PGlite does not leak its internal process exit state into the successful host process.
+
+The real runtime verification additionally proves that:
+
+- the Node bundle starts under the actual `node` executable,
+- Node initializes a PGlite repository at a temporary filesystem path,
+- `/health` and SSR behavior remain intact,
+- `/api/todos` returns the seeded database data from that live Node process,
+- temporary database state is cleaned up after the process is terminated.
+
+The final CI acceptance path is:
+
+```text
+route generation
+      ↓
+strict TypeScript
+      ↓
+M01-M11 executable verification
+      ↓
+M11 database integration verification
+      ↓
+static generation + verification
+      ↓
+Node runtime build
+      ↓
+edge/Worker build
+      ↓
+real Node + database runtime verification
+      ↓
+browser client bundles
+```
+
+### What M11 establishes
+
+M11 gives `rxjs-fullstack` a persistent server-side source of truth without changing the application execution model.
+
+```text
+browser / SSR / SSG
+       ↓
+Query/Cache + server actions
+       ↓
+Hono API
+       ↓
+TodoRepository Observable effects
+       ↓
+selected persistence adapter
+       ├── memory
+       └── PGlite/Postgres
+```
+
+The layers remain independently understandable:
+
+```text
+RxJS chooses execution and temporal policy.
+Query/Cache owns cached server reads.
+Server actions own typed write effects.
+Hono owns HTTP.
+TodoRepository owns the persistence contract.
+PGlite owns the reference Postgres implementation.
+Runtime composition roots choose concrete dependencies.
+```
+
+That is the larger M11 result: **the source of truth can move from memory to a real persistent database while the RxJS machine stays the same.**
+
+## What M01–M11 establish
 
 ```text
 M01  JSX is a typed description of a view.
@@ -2028,6 +2749,7 @@ M07  Forms drive typed, lazy, cancellable RxJS server actions.
 M08  Server-resolved query state continues into browser Query/Cache.
 M09  The same page machine can execute at build time to produce static HTML.
 M10  Multiple runtimes host the same Web Request → Response application.
+M11  Persistent database effects enter through an injected RxJS repository port.
 ```
 
 The current architecture is:
@@ -2047,14 +2769,25 @@ shared route-document renderer
       ├──────── build time ──────────► dist/static/**/index.html
       │                               + dehydrated Query/Cache state
       │
-      └──────── request time ────────► Hono app.fetch
+      └──────── request time ────────► Hono app
                                          │
-                            ┌────────────┼────────────┐
-                            ▼            ▼            ▼
-                           Bun         Node.js     fetch-native
-                                        │          edge runtime
-                                        ▼
-                               @hono/node-server
+                                         ▼
+                             TodoRepository Observable effects
+                                  │                 │
+                                  ▼                 ▼
+                         memory repository      PGlite/Postgres
+                         portable/test/SSG       Bun + Node
+                                  │                 │
+                                  └────────┬────────┘
+                                           ▼
+                                      Web Response
+                                           │
+                              ┌────────────┼────────────┐
+                              ▼            ▼            ▼
+                             Bun         Node.js     fetch-native
+                                          │          edge runtime
+                                          ▼
+                                 @hono/node-server
 
 browser side
       ↓
@@ -2089,13 +2822,39 @@ bun run start:bun
 
 Then open `http://localhost:3000`.
 
+Bun's M11 server composition uses the persistent PGlite repository. By default its data is stored under:
+
+```text
+./.rxjs-fullstack-db
+```
+
+Use `DATABASE_PATH` to select another filesystem location:
+
+```sh
+DATABASE_PATH=./data/dev-postgres bun run dev:bun
+```
+
 ### Node.js runtime
 
 ```sh
 bun run start:node
 ```
 
-This generates routes, builds `dist/runtime/node.js`, and launches it under Node.js. `PORT` can override the default `3000` port.
+This generates routes, builds `dist/runtime/node.js`, and launches it under Node.js. `PORT` overrides the default `3000` port, and `DATABASE_PATH` overrides the default database location.
+
+For example:
+
+```sh
+PORT=8080 DATABASE_PATH=./data/node-postgres bun run start:node
+```
+
+### Database verification
+
+```sh
+bun run verify:database
+```
+
+This uses a temporary filesystem database and proves cold repository effects, migration/seed behavior, persistence across reopen, HTTP reads, and server-action writes.
 
 ### Static site generation
 
@@ -2103,7 +2862,7 @@ This generates routes, builds `dist/runtime/node.js`, and launches it under Node
 bun run build:static
 ```
 
-Generated pages are written under `dist/static/`.
+Generated pages are written under `dist/static/`. The SSG/reference `app` composition remains deterministic and does not require the persistent filesystem database.
 
 ### Runtime builds and verification
 
@@ -2125,7 +2884,7 @@ GET  /api/todos
 POST /api/actions/todos.create
 ```
 
-The older `/hello/:name` code remains in `src/examples/routes.tsx` as a typed-routing proof for path-derived params and `href()` generation; it is not part of the generated M06–M10 application route tree.
+The older `/hello/:name` code remains in `src/examples/routes.tsx` as a typed-routing proof for path-derived params and `href()` generation; it is not part of the generated M06–M11 application route tree.
 
 ## Development collaboration
 
@@ -2137,4 +2896,4 @@ See [`CONTRIBUTORS.md`](./CONTRIBUTORS.md) for the project contributor list.
 
 ## Architectural rule
 
-The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, `rxjs-router` owns routing semantics, Hono owns HTTP, runtime adapters own hosting, and Bun remains the reference development/build tool rather than framework semantics.
+The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, `rxjs-router` owns routing semantics, Hono owns HTTP, repository ports own persistence contracts, runtime composition roots select concrete dependencies, and Bun remains the reference development/build tool rather than framework semantics.
