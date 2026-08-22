@@ -1,10 +1,11 @@
-import { Observable, throwError } from 'rxjs';
+import { Observable, of, throwError } from 'rxjs';
 
 import { QUERY_STATE_SCRIPT_ID } from '../src/query';
-import {
-  renderDocumentStream,
-} from '../src/render/html';
 import { renderRouteDocument } from '../src/render/page';
+import {
+  type HtmlStreamSink,
+  writeDocumentStream,
+} from '../src/render/stream';
 import { routes } from '../src/routes';
 import { app } from '../src/server/app';
 
@@ -38,7 +39,7 @@ assert(
 assertEqual(
   response.headers.get('content-encoding'),
   'Identity',
-  'M13: streaming SSR should prevent content encoding from buffering the response.',
+  'M13: streaming SSR should use identity content encoding.',
 );
 assertEqual(
   response.headers.get('cache-control'),
@@ -102,33 +103,89 @@ assert(
   buffered.html.includes('id="streaming-shell"') &&
     buffered.html.includes('id="streaming-progress"') &&
     buffered.html.includes('id="streaming-todos"'),
-  'M13: build-time/buffered rendering should contain every streaming page phase.',
+  'M13: buffered rendering should contain every streaming page phase.',
 );
 
-let cancelled = false;
-const cancellationSource$ = new Observable<string>((subscriber) => {
-  const handle = setTimeout(() => subscriber.next('<p>late chunk</p>'), 1_000);
+const decodeChunks = (chunks: readonly Uint8Array[]): string => {
+  const textDecoder = new TextDecoder();
+  return chunks.map((chunk) => textDecoder.decode(chunk)).join('');
+};
+
+let inFlightWrites = 0;
+let maxInFlightWrites = 0;
+const orderedChunks: Uint8Array[] = [];
+const backpressureSink: HtmlStreamSink = {
+  onAbort: () => undefined,
+  write: async (chunk) => {
+    inFlightWrites += 1;
+    maxInFlightWrites = Math.max(maxInFlightWrites, inFlightWrites);
+    await new Promise<void>((resolve) => setTimeout(resolve, 2));
+    orderedChunks.push(chunk);
+    inFlightWrites -= 1;
+  },
+};
+await writeDocumentStream({
+  sink: backpressureSink,
+  title: 'Backpressure proof',
+  initialBody: '<p>shell</p>',
+  body$: of('<p>one</p>', '<p>two</p>', '<p>three</p>'),
+});
+assertEqual(
+  maxInFlightWrites,
+  1,
+  'M13: concatMap should await each downstream write before starting the next chunk.',
+);
+assert(
+  decodeChunks(orderedChunks).includes('<p>one</p><p>two</p><p>three</p>'),
+  'M13: backpressure-aware writes should preserve Observable emission order.',
+);
+
+let abortCallback: (() => void) | undefined;
+let cancellationTeardown = false;
+let subscribedResolve: (() => void) | undefined;
+const subscribed = new Promise<void>((resolve) => {
+  subscribedResolve = resolve;
+});
+const cancellationSource$ = new Observable<string>(() => {
+  subscribedResolve?.();
   return () => {
-    cancelled = true;
-    clearTimeout(handle);
+    cancellationTeardown = true;
   };
 });
-const cancellationStream = renderDocumentStream({
+const cancellationSink: HtmlStreamSink = {
+  onAbort: (callback) => {
+    abortCallback = callback;
+  },
+  write: async () => undefined,
+};
+const cancellationWork = writeDocumentStream({
+  sink: cancellationSink,
   title: 'Cancellation proof',
   initialBody: '<p>shell</p>',
   body$: cancellationSource$,
 });
-const cancellationReader = cancellationStream.getReader();
-await cancellationReader.read();
-await cancellationReader.cancel();
-assert(cancelled, 'M13: cancelling the ReadableStream should unsubscribe the RxJS body source.');
+await subscribed;
+abortCallback?.();
+await cancellationWork;
+assert(
+  cancellationTeardown,
+  'M13: aborting the HTTP stream should unsubscribe the RxJS body source.',
+);
 
-const errorStream = renderDocumentStream({
+const errorChunks: Uint8Array[] = [];
+const errorSink: HtmlStreamSink = {
+  onAbort: () => undefined,
+  write: async (chunk) => {
+    errorChunks.push(chunk);
+  },
+};
+await writeDocumentStream({
+  sink: errorSink,
   title: 'Error proof',
   initialBody: '<p>shell</p>',
   body$: throwError(() => new Error('sensitive stream failure')),
 });
-const errorHtml = await new Response(errorStream).text();
+const errorHtml = decodeChunks(errorChunks);
 assert(
   errorHtml.includes('data-rxjs-stream-error="true"'),
   'M13: a post-start stream error should become a generic in-band error fragment.',
