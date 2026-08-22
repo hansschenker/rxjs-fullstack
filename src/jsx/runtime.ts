@@ -16,22 +16,53 @@ export interface FragmentNode {
 
 export type ViewNode = ElementNode | FragmentNode;
 
-export type ViewChild =
-  | PrimitiveView
-  | ViewNode
-  | Observable<unknown>
-  | readonly ViewChild[];
+export type ViewChild = PrimitiveView | ViewNode | Observable<unknown> | readonly ViewChild[];
 
 export type EventObservers = Partial<{
   [K in keyof GlobalEventHandlersEventMap]: Observer<GlobalEventHandlersEventMap[K]>;
 }>;
 
-export interface ElementProps {
-  readonly children?: ViewChild | readonly ViewChild[];
-  readonly on?: EventObservers;
-  readonly className?: string | Observable<unknown>;
-  readonly [name: string]: unknown;
+type Bindable<T> = T | Observable<unknown>;
+
+interface KnownHtmlAttributes {
+  readonly action?: Bindable<string>;
+  readonly alt?: Bindable<string>;
+  readonly autocomplete?: Bindable<string>;
+  readonly checked?: Bindable<boolean>;
+  readonly class?: Bindable<string>;
+  readonly className?: Bindable<string>;
+  readonly disabled?: Bindable<boolean>;
+  readonly height?: Bindable<string | number>;
+  readonly hidden?: Bindable<boolean>;
+  readonly href?: Bindable<string>;
+  readonly id?: Bindable<string>;
+  readonly maxlength?: Bindable<string | number>;
+  readonly method?: Bindable<string>;
+  readonly minlength?: Bindable<string | number>;
+  readonly name?: Bindable<string>;
+  readonly placeholder?: Bindable<string>;
+  readonly rel?: Bindable<string>;
+  readonly required?: Bindable<boolean>;
+  readonly role?: Bindable<string>;
+  readonly selected?: Bindable<boolean>;
+  readonly src?: Bindable<string>;
+  readonly style?: Bindable<string>;
+  readonly target?: Bindable<string>;
+  readonly title?: Bindable<string>;
+  readonly type?: Bindable<string>;
+  readonly value?: Bindable<string | number | readonly string[]>;
+  readonly width?: Bindable<string | number>;
 }
+
+type CustomHtmlAttributes = {
+  readonly [Name in `data-${string}` | `aria-${string}`]?: unknown;
+};
+
+export type ElementProps = KnownHtmlAttributes &
+  CustomHtmlAttributes & {
+    readonly children?: ViewChild | readonly ViewChild[];
+    readonly on?: EventObservers;
+  };
 
 export type Component<Props extends object = Record<string, never>> = (
   props: Props & { readonly children?: readonly ViewChild[] },
@@ -98,10 +129,14 @@ export const isViewNode = (value: unknown): value is ViewNode => {
   return kind === 'element' || kind === 'fragment';
 };
 
+type HtmlIntrinsicElements = {
+  readonly [TagName in keyof HTMLElementTagNameMap]: ElementProps;
+};
+
 declare global {
   namespace JSX {
     type Element = ViewChild;
-    type IntrinsicElements = Record<string, ElementProps>;
+    type IntrinsicElements = HtmlIntrinsicElements;
 
     interface ElementChildrenAttribute {
       children: unknown;

@@ -21,10 +21,7 @@ export const createMemoryTodoRepository = (): TodoRepository => {
         throwIfRepositoryOperationAborted(options?.signal);
         return of(todos.map((todo) => ({ ...todo })));
       }),
-    create$: (
-      { title }: CreateTodoInput,
-      options?: RepositoryOperationOptions,
-    ) =>
+    create$: ({ title }: CreateTodoInput, options?: RepositoryOperationOptions) =>
       defer(() => {
         throwIfRepositoryOperationAborted(options?.signal);
         const todo: Todo = { id: nextTodoId++, title, done: false };

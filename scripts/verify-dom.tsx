@@ -28,7 +28,11 @@ const staticContainer = document.createElement('div');
 const staticLifetime = mount(
   <>
     <section className="panel">
-      {['alpha', 'beta'].map((item): ViewChild => <span>{item}</span>)}
+      {['alpha', 'beta'].map(
+        (item): ViewChild => (
+          <span>{item}</span>
+        ),
+      )}
     </section>
   </>,
   staticContainer,
@@ -51,7 +55,11 @@ const counterContainer = document.createElement('div');
 const counterLifetime = mount(<Counter />, counterContainer);
 const counterButton = counterContainer.querySelector('button');
 assert(counterButton !== null, 'M02: the counter should render its button.');
-assertEqual(counterButton.textContent, 'Count: 0', 'M02: the counter should render its startWith(0) state.');
+assertEqual(
+  counterButton.textContent,
+  'Count: 0',
+  'M02: the counter should render its startWith(0) state.',
+);
 
 counterButton.dispatchEvent(new Event('click'));
 assertEqual(
@@ -60,7 +68,11 @@ assertEqual(
   'M02: a click should flow through the Subject into scan and back into the DOM.',
 );
 counterButton.dispatchEvent(new Event('click'));
-assertEqual(counterButton.textContent, 'Count: 2', 'M02: each click should advance the RxJS state machine.');
+assertEqual(
+  counterButton.textContent,
+  'Count: 2',
+  'M02: each click should advance the RxJS state machine.',
+);
 
 counterLifetime.unsubscribe();
 assertEqual(counterContainer.innerHTML, '', 'M02: unmounting the counter must clear its DOM.');
@@ -106,7 +118,11 @@ assertEqual(
   'subscribe:first,teardown:first,subscribe:second,teardown:second',
   'M02: unmounting must tear down the current live-region child subscription.',
 );
-assertEqual(view$.observed, false, 'M02: unmounting must unsubscribe from the live-region source Observable.');
+assertEqual(
+  view$.observed,
+  false,
+  'M02: unmounting must unsubscribe from the live-region source Observable.',
+);
 
 // M02: replacing a live region must remove the previous child's listeners.
 const swap$ = new Subject<ViewChild>();
@@ -127,7 +143,11 @@ assertEqual(innerClicks, 1, 'M02: events on an emitted child should reach its Ob
 
 swap$.next(<p>replaced</p>);
 innerButton.dispatchEvent(new Event('click'));
-assertEqual(innerClicks, 1, 'M02: replacing a live region must remove the previous child event listeners.');
+assertEqual(
+  innerClicks,
+  1,
+  'M02: replacing a live region must remove the previous child event listeners.',
+);
 
 swapLifetime.unsubscribe();
 
@@ -144,9 +164,17 @@ assertEqual(
 );
 
 class$.next('accent');
-assertEqual(paragraph.getAttribute('class'), 'accent', 'M02: Observable props should become live attribute bindings.');
+assertEqual(
+  paragraph.getAttribute('class'),
+  'accent',
+  'M02: Observable props should become live attribute bindings.',
+);
 class$.next('muted');
-assertEqual(paragraph.getAttribute('class'), 'muted', 'M02: attribute bindings should follow later emissions.');
+assertEqual(
+  paragraph.getAttribute('class'),
+  'muted',
+  'M02: attribute bindings should follow later emissions.',
+);
 
 attributeLifetime.unsubscribe();
 assertEqual(class$.observed, false, 'M02: unmounting must unsubscribe attribute bindings.');
@@ -176,8 +204,16 @@ const innerProbe$ = new Observable<string>((subscriber) => {
 });
 
 failing$.next(<p>{innerProbe$}</p>);
-assertEqual(errorContainer.querySelectorAll('p').length, 2, 'M02: the live region should render before the error.');
-assertEqual(innerActive, 1, 'M02: the emitted child subscription should be active before the error.');
+assertEqual(
+  errorContainer.querySelectorAll('p').length,
+  2,
+  'M02: the live region should render before the error.',
+);
+assertEqual(
+  innerActive,
+  1,
+  'M02: the emitted child subscription should be active before the error.',
+);
 
 failing$.error(new Error('child stream failed'));
 assertEqual(
@@ -185,15 +221,27 @@ assertEqual(
   1,
   'M02: an erroring live region must clear its content instead of freezing stale DOM.',
 );
-assertEqual(errorContainer.querySelector('p')?.textContent, 'stable', 'M02: sibling content must survive a live-region error.');
-assertEqual(innerActive, 0, 'M02: an erroring live region must tear down the current child subscription.');
+assertEqual(
+  errorContainer.querySelector('p')?.textContent,
+  'stable',
+  'M02: sibling content must survive a live-region error.',
+);
+assertEqual(
+  innerActive,
+  0,
+  'M02: an erroring live region must tear down the current child subscription.',
+);
 assertEqual(childErrors.length, 1, 'M02: the mount onError hook should receive the child error.');
 assert(
   childErrors[0] instanceof Error && childErrors[0].message === 'child stream failed',
   'M02: the reported error should be the original stream error.',
 );
 errorLifetime.unsubscribe();
-assertEqual(errorContainer.innerHTML, '', 'M02: the mount lifetime must remain usable after a binding error.');
+assertEqual(
+  errorContainer.innerHTML,
+  '',
+  'M02: the mount lifetime must remain usable after a binding error.',
+);
 
 // M02: an erroring Observable attribute removes the stale value and reports.
 const attributeErrors: Array<unknown> = [];
@@ -205,14 +253,22 @@ const attrErrorLifetime = mount(<p className={failingClass$}>styled</p>, attrErr
 const attrErrorParagraph = attrErrorContainer.querySelector('p');
 assert(attrErrorParagraph !== null, 'M02: the failing-attribute host should render.');
 failingClass$.next('accent');
-assertEqual(attrErrorParagraph.getAttribute('class'), 'accent', 'M02: the attribute should bind before the error.');
+assertEqual(
+  attrErrorParagraph.getAttribute('class'),
+  'accent',
+  'M02: the attribute should bind before the error.',
+);
 failingClass$.error(new Error('attribute stream failed'));
 assertEqual(
   attrErrorParagraph.getAttribute('class'),
   null,
   'M02: an erroring attribute binding must remove the stale attribute.',
 );
-assertEqual(attributeErrors.length, 1, 'M02: the mount onError hook should receive the attribute error.');
+assertEqual(
+  attributeErrors.length,
+  1,
+  'M02: the mount onError hook should receive the attribute error.',
+);
 attrErrorLifetime.unsubscribe();
 
 // M02: live form state binds to DOM properties — value/checked/selected
@@ -234,19 +290,39 @@ assert(textInput instanceof HTMLInputElement, 'M02: the text input should render
 assert(checkbox instanceof HTMLInputElement, 'M02: the checkbox should render.');
 
 value$.next('first');
-assertEqual(textInput.value, 'first', 'M02: an Observable value binding should drive the input property.');
-assertEqual(textInput.getAttribute('value'), null, 'M02: live value must bind to the property, not the attribute.');
+assertEqual(
+  textInput.value,
+  'first',
+  'M02: an Observable value binding should drive the input property.',
+);
+assertEqual(
+  textInput.getAttribute('value'),
+  null,
+  'M02: live value must bind to the property, not the attribute.',
+);
 
 textInput.value = 'typed by the user';
 value$.next('second');
-assertEqual(textInput.value, 'second', 'M02: value emissions must keep driving the control after user edits.');
+assertEqual(
+  textInput.value,
+  'second',
+  'M02: value emissions must keep driving the control after user edits.',
+);
 
 value$.next(undefined);
 assertEqual(textInput.value, '', 'M02: clearing the value binding should reset the control.');
 
 checked$.next(true);
-assertEqual(checkbox.checked, true, 'M02: an Observable checked binding should drive the checkbox property.');
-assertEqual(checkbox.getAttribute('checked'), null, 'M02: live checked must bind to the property, not the attribute.');
+assertEqual(
+  checkbox.checked,
+  true,
+  'M02: an Observable checked binding should drive the checkbox property.',
+);
+assertEqual(
+  checkbox.getAttribute('checked'),
+  null,
+  'M02: live checked must bind to the property, not the attribute.',
+);
 checked$.next(false);
 assertEqual(checkbox.checked, false, 'M02: checked emissions should uncheck the control.');
 formLifetime.unsubscribe();
@@ -296,7 +372,11 @@ assertEqual(
   'About RxJS Fullstack',
   'Navigation: clicking a nav link should swap the routed view client-side.',
 );
-assertEqual(document.title, 'RxJS Fullstack About', 'Navigation: the page title should follow the route.');
+assertEqual(
+  document.title,
+  'RxJS Fullstack About',
+  'Navigation: the page title should follow the route.',
+);
 
 shellLifetime.unsubscribe();
 assertEqual(shellContainer.innerHTML, '', 'Navigation: unmounting the shell must clear its DOM.');

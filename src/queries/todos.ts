@@ -5,10 +5,7 @@ import { queryOptions } from '../query';
 
 export type { CreateTodoInput, Todo } from '../domain/todos';
 
-export type QueryFetch = (
-  input: string,
-  init?: RequestInit,
-) => Promise<Response>;
+export type QueryFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 const browserFetch: QueryFetch = (input, init) => fetch(input, init);
 
@@ -27,5 +24,4 @@ export const createTodosQuery = (fetcher: QueryFetch = browserFetch) =>
 
 export const todosQuery = createTodosQuery();
 
-export const createTodo$ = (input: CreateTodoInput) =>
-  invokeServerAction$(createTodoAction, input);
+export const createTodo$ = (input: CreateTodoInput) => invokeServerAction$(createTodoAction, input);

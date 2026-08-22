@@ -8,33 +8,21 @@ import {
   createPbkdf2PasswordHasher,
   hashOpaqueToken,
 } from '../src/auth/password';
-import {
-  AuthEmailAlreadyRegisteredError,
-  createAuthService,
-} from '../src/auth/service';
+import { AuthEmailAlreadyRegisteredError, createAuthService } from '../src/auth/service';
 import { createMemoryAuthRepository } from '../src/database/memory-auth-repository';
 import { createMemoryTodoRepository } from '../src/database/memory-todos-repository';
 import { createPgliteApplicationRepositories } from '../src/database/pglite-application-repositories';
 import { createApp } from '../src/server/app';
 
-const assert: (condition: unknown, message: string) => asserts condition = (
-  condition,
-  message,
-) => {
+const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
     throw new Error(message);
   }
 };
 
-const assertEqual = (
-  actual: unknown,
-  expected: unknown,
-  message: string,
-): void => {
+const assertEqual = (actual: unknown, expected: unknown, message: string): void => {
   if (!Object.is(actual, expected)) {
-    throw new Error(
-      `${message}\nExpected: ${String(expected)}\nActual: ${String(actual)}`,
-    );
+    throw new Error(`${message}\nExpected: ${String(expected)}\nActual: ${String(actual)}`);
   }
 };
 
@@ -56,29 +44,27 @@ const credentials = {
 } as const;
 
 const pendingRegistration$ = authService.register$(credentials);
-const beforeRegistration = await firstValueFrom(
-  authRepository.findUserByEmail$(credentials.email),
-);
+const beforeRegistration = await firstValueFrom(authRepository.findUserByEmail$(credentials.email));
 assertEqual(
   beforeRegistration,
   undefined,
   'M12: constructing register$ must not create a user before subscription.',
 );
 const registeredUser = await firstValueFrom(pendingRegistration$);
-const storedUser = await firstValueFrom(
-  authRepository.findUserByEmail$(credentials.email),
-);
+const storedUser = await firstValueFrom(authRepository.findUserByEmail$(credentials.email));
 assert(storedUser, 'M12: subscribing to register$ should persist the user.');
 assert(
   storedUser.passwordHash !== credentials.password &&
     storedUser.passwordHash.startsWith('pbkdf2-sha256$1000$'),
   'M12: repositories must store a salted password derivation instead of plaintext.',
 );
-assertEqual(registeredUser.email, credentials.email, 'M12: registration should normalize the user identity.');
 assertEqual(
-  await firstValueFrom(
-    authRepository.createUser$(credentials.email, 'duplicate-password-hash'),
-  ),
+  registeredUser.email,
+  credentials.email,
+  'M12: registration should normalize the user identity.',
+);
+assertEqual(
+  await firstValueFrom(authRepository.createUser$(credentials.email, 'duplicate-password-hash')),
   undefined,
   'M12: the repository create boundary should report an email conflict instead of throwing a generic persistence error.',
 );
@@ -87,8 +73,7 @@ let duplicateRegistrationRejected = false;
 try {
   await firstValueFrom(authService.register$(credentials));
 } catch (error) {
-  duplicateRegistrationRejected =
-    error instanceof AuthEmailAlreadyRegisteredError;
+  duplicateRegistrationRejected = error instanceof AuthEmailAlreadyRegisteredError;
 }
 assert(
   duplicateRegistrationRejected,
@@ -103,8 +88,7 @@ const unknownIdentityService = createAuthService({
       unknownIdentityKdfExecutions += 1;
       return testHasher.hash(password);
     },
-    verify: (password, encodedHash) =>
-      testHasher.verify(password, encodedHash),
+    verify: (password, encodedHash) => testHasher.verify(password, encodedHash),
   },
 });
 try {
@@ -120,9 +104,7 @@ assertEqual(
 
 let wrongPasswordRejected = false;
 try {
-  await firstValueFrom(
-    authService.login$({ ...credentials, password: 'wrong-password-value' }),
-  );
+  await firstValueFrom(authService.login$({ ...credentials, password: 'wrong-password-value' }));
 } catch {
   wrongPasswordRejected = true;
 }
@@ -151,8 +133,16 @@ const app = createApp({
 });
 
 const accountBeforeLogin = await app.request('/account/profile');
-assertEqual(accountBeforeLogin.status, 302, 'M12: protected routes should redirect anonymous requests.');
-assertEqual(accountBeforeLogin.headers.get('location'), '/login', 'M12: anonymous account requests should redirect to login.');
+assertEqual(
+  accountBeforeLogin.status,
+  302,
+  'M12: protected routes should redirect anonymous requests.',
+);
+assertEqual(
+  accountBeforeLogin.headers.get('location'),
+  '/login',
+  'M12: anonymous account requests should redirect to login.',
+);
 
 const registerResponse = await app.request('/auth/register', {
   method: 'POST',
@@ -172,7 +162,11 @@ const duplicateRegisterResponse = await app.request('/auth/register', {
   },
   body: new URLSearchParams(credentials),
 });
-assertEqual(duplicateRegisterResponse.status, 303, 'M12: duplicate registration should stay on the normal redirect path.');
+assertEqual(
+  duplicateRegisterResponse.status,
+  303,
+  'M12: duplicate registration should stay on the normal redirect path.',
+);
 assertEqual(
   duplicateRegisterResponse.headers.get('location'),
   '/register?error=exists',
@@ -201,7 +195,11 @@ const crossSiteLogin = await app.request('/auth/login', {
   },
   body: new URLSearchParams(credentials),
 });
-assertEqual(crossSiteLogin.status, 403, 'M12: explicit cross-site login requests should be rejected.');
+assertEqual(
+  crossSiteLogin.status,
+  403,
+  'M12: explicit cross-site login requests should be rejected.',
+);
 
 const loginResponse = await app.request('/auth/login', {
   method: 'POST',
@@ -211,8 +209,16 @@ const loginResponse = await app.request('/auth/login', {
   },
   body: new URLSearchParams(credentials),
 });
-assertEqual(loginResponse.status, 303, 'M12: successful login should redirect to the protected account page.');
-assertEqual(loginResponse.headers.get('location'), '/account/profile', 'M12: login should redirect to /account/profile.');
+assertEqual(
+  loginResponse.status,
+  303,
+  'M12: successful login should redirect to the protected account page.',
+);
+assertEqual(
+  loginResponse.headers.get('location'),
+  '/account/profile',
+  'M12: login should redirect to /account/profile.',
+);
 
 const getSetCookie = (headers: Headers): readonly string[] => {
   const extended = headers as Headers & { getSetCookie?: () => string[] };
@@ -248,15 +254,29 @@ assertEqual(sessionResponse.status, 200, 'M12: session introspection should retu
 const sessionJson = (await sessionResponse.json()) as {
   readonly user: { readonly email: string } | null;
 };
-assertEqual(sessionJson.user?.email, credentials.email, 'M12: session cookie should resolve to the authenticated user.');
+assertEqual(
+  sessionJson.user?.email,
+  credentials.email,
+  'M12: session cookie should resolve to the authenticated user.',
+);
 
 const accountAfterLogin = await app.request('/account/profile', {
   headers: { cookie: cookieHeader },
 });
-assertEqual(accountAfterLogin.status, 200, 'M12: authenticated users should enter the protected account route.');
+assertEqual(
+  accountAfterLogin.status,
+  200,
+  'M12: authenticated users should enter the protected account route.',
+);
 const accountHtml = await accountAfterLogin.text();
-assert(accountHtml.includes(credentials.email), 'M12: protected SSR should receive the authenticated user through route context.');
-assert(accountHtml.includes(`value="${csrfToken}"`), 'M12: protected SSR should render the session-bound CSRF token into the logout form.');
+assert(
+  accountHtml.includes(credentials.email),
+  'M12: protected SSR should receive the authenticated user through route context.',
+);
+assert(
+  accountHtml.includes(`value="${csrfToken}"`),
+  'M12: protected SSR should render the session-bound CSRF token into the logout form.',
+);
 
 const badLogout = await app.request('/auth/logout', {
   method: 'POST',
@@ -278,12 +298,20 @@ const logoutResponse = await app.request('/auth/logout', {
   },
   body: new URLSearchParams({ csrf: csrfToken }),
 });
-assertEqual(logoutResponse.status, 303, 'M12: valid logout should revoke the server session and redirect.');
+assertEqual(
+  logoutResponse.status,
+  303,
+  'M12: valid logout should revoke the server session and redirect.',
+);
 
 const accountAfterLogout = await app.request('/account/profile', {
   headers: { cookie: cookieHeader },
 });
-assertEqual(accountAfterLogout.status, 302, 'M12: a revoked session must no longer authorize the protected route.');
+assertEqual(
+  accountAfterLogout.status,
+  302,
+  'M12: a revoked session must no longer authorize the protected route.',
+);
 
 const secureLogin = await app.request('https://rxjs-fullstack.test/auth/login', {
   method: 'POST',
@@ -310,10 +338,7 @@ try {
   await firstValueFrom(firstService.register$(credentials));
   assertEqual(
     await firstValueFrom(
-      firstRepositories.authRepository.createUser$(
-        credentials.email,
-        'duplicate-password-hash',
-      ),
+      firstRepositories.authRepository.createUser$(credentials.email, 'duplicate-password-hash'),
     ),
     undefined,
     'M12: Postgres email conflicts should be represented by the repository contract instead of an untyped uniqueness exception.',
@@ -329,10 +354,7 @@ try {
     passwordHasher: testHasher,
   });
   const reopenedSession = await firstValueFrom(
-    reopenedService.resolveSession$(
-      persistedSession.sessionToken,
-      persistedSession.csrfToken,
-    ),
+    reopenedService.resolveSession$(persistedSession.sessionToken, persistedSession.csrfToken),
   );
   assertEqual(
     reopenedSession?.user.email,

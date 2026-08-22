@@ -60,10 +60,7 @@ export const createApp = ({
     });
 
     if (result.type === 'redirect') {
-      return context.redirect(
-        result.location,
-        result.statusCode as 301 | 302 | 303 | 307 | 308,
-      );
+      return context.redirect(result.location, result.statusCode as 301 | 302 | 303 | 307 | 308);
     }
 
     if (result.type === 'notFound') {

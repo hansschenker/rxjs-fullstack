@@ -1,10 +1,7 @@
 import { QUERY_STATE_SCRIPT_ID } from '../src/query';
 import { routes } from '../src/routes';
 import { app } from '../src/server/app';
-import {
-  collectStaticPathnames,
-  staticOutputPath,
-} from '../src/ssg/static';
+import { collectStaticPathnames, staticOutputPath } from '../src/ssg/static';
 
 declare global {
   interface ImportMeta {
@@ -19,24 +16,15 @@ declare const Bun: {
   };
 };
 
-const assert: (condition: unknown, message: string) => asserts condition = (
-  condition,
-  message,
-) => {
+const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
     throw new Error(message);
   }
 };
 
-const assertEqual = (
-  actual: unknown,
-  expected: unknown,
-  message: string,
-): void => {
+const assertEqual = (actual: unknown, expected: unknown, message: string): void => {
   if (!Object.is(actual, expected)) {
-    throw new Error(
-      `${message}\nExpected: ${String(expected)}\nActual: ${String(actual)}`,
-    );
+    throw new Error(`${message}\nExpected: ${String(expected)}\nActual: ${String(actual)}`);
   }
 };
 
@@ -46,10 +34,7 @@ const pathnames = collectStaticPathnames(routes);
 for (const pathname of pathnames) {
   const outputPath = staticOutputPath(pathname);
   const outputFile = `${projectRoot}/${outputPath}`;
-  assert(
-    await Bun.file(outputFile).exists(),
-    `M09: static build should write ${outputPath}.`,
-  );
+  assert(await Bun.file(outputFile).exists(), `M09: static build should write ${outputPath}.`);
 }
 
 const aboutFile = `${projectRoot}/${staticOutputPath('/about')}`;

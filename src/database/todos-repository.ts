@@ -8,9 +8,6 @@ export { throwIfRepositoryOperationAborted } from './repository';
 
 export interface TodoRepository {
   list$(options?: RepositoryOperationOptions): Observable<readonly Todo[]>;
-  create$(
-    input: CreateTodoInput,
-    options?: RepositoryOperationOptions,
-  ): Observable<Todo>;
+  create$(input: CreateTodoInput, options?: RepositoryOperationOptions): Observable<Todo>;
   close(): Promise<void>;
 }

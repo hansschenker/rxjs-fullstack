@@ -1,25 +1,11 @@
-import {
-  firstValueFrom,
-  map,
-  timeout,
-  toArray,
-  type Observable,
-} from 'rxjs';
+import { firstValueFrom, map, timeout, toArray, type Observable } from 'rxjs';
 import { resolveRequest, type AnyRoute } from 'rxjs-router';
 
 import type { ResolvedAuthSession } from '../auth/types';
-import {
-  QUERY_STATE_SCRIPT_ID,
-  QueryClient,
-  dehydrate,
-} from '../query';
+import { QUERY_STATE_SCRIPT_ID, QueryClient, dehydrate } from '../query';
 import type { PageData } from '../routes/types';
 import type { ServerRouteContext } from '../server/route-context';
-import {
-  renderDocument,
-  renderToString,
-  type HtmlJsonScript,
-} from './html';
+import { renderDocument, renderToString, type HtmlJsonScript } from './html';
 
 export const BUFFERED_STREAM_TIMEOUT_MS = 30_000;
 
@@ -117,12 +103,13 @@ const resolveRoutePage = async ({
   };
 };
 
-const queryStateScripts = (queryClient: QueryClient) => [
-  {
-    id: QUERY_STATE_SCRIPT_ID,
-    value: dehydrate(queryClient),
-  },
-] as const;
+const queryStateScripts = (queryClient: QueryClient) =>
+  [
+    {
+      id: QUERY_STATE_SCRIPT_ID,
+      value: dehydrate(queryClient),
+    },
+  ] as const;
 
 const renderBufferedPage = async (
   page: PageData,

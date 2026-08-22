@@ -8,12 +8,7 @@ import {
   hashOpaqueToken,
   type PasswordHasher,
 } from './password';
-import type {
-  AuthCredentials,
-  AuthUser,
-  CreatedAuthSession,
-  ResolvedAuthSession,
-} from './types';
+import type { AuthCredentials, AuthUser, CreatedAuthSession, ResolvedAuthSession } from './types';
 
 export const AUTH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -88,15 +83,12 @@ export const createAuthService = ({
     }
 
     if (stored.expiresAt.getTime() <= now()) {
-      await firstValueFrom(
-        repository.deleteSessionByTokenHash$(sessionTokenHash, options),
-      );
+      await firstValueFrom(repository.deleteSessionByTokenHash$(sessionTokenHash, options));
       return null;
     }
 
     const csrfHash = csrfToken ? await hashOpaqueToken(csrfToken) : undefined;
-    const csrfValid =
-      csrfHash !== undefined && constantTimeEqualString(csrfHash, stored.csrfHash);
+    const csrfValid = csrfHash !== undefined && constantTimeEqualString(csrfHash, stored.csrfHash);
 
     return {
       user: stored.user,
@@ -127,16 +119,11 @@ export const createAuthService = ({
       }),
     login$: (credentials, options) =>
       defer(async () => {
-        const user = await firstValueFrom(
-          repository.findUserByEmail$(credentials.email, options),
-        );
+        const user = await firstValueFrom(repository.findUserByEmail$(credentials.email, options));
 
         let passwordMatches = false;
         if (user) {
-          passwordMatches = await passwordHasher.verify(
-            credentials.password,
-            user.passwordHash,
-          );
+          passwordMatches = await passwordHasher.verify(credentials.password, user.passwordHash);
         } else {
           // Perform one password derivation for unknown identities as well so
           // the invalid-login path does not expose a large password-KDF timing gap.
@@ -156,10 +143,7 @@ export const createAuthService = ({
         const expiresAt = new Date(now() + AUTH_SESSION_TTL_MS);
 
         await firstValueFrom(
-          repository.createSession$(
-            { userId: user.id, tokenHash, csrfHash, expiresAt },
-            options,
-          ),
+          repository.createSession$({ userId: user.id, tokenHash, csrfHash, expiresAt }, options),
         );
 
         return {
@@ -179,10 +163,7 @@ export const createAuthService = ({
         }
 
         await firstValueFrom(
-          repository.deleteSessionByTokenHash$(
-            resolved.sessionTokenHash,
-            options,
-          ),
+          repository.deleteSessionByTokenHash$(resolved.sessionTokenHash, options),
         );
       }),
   };

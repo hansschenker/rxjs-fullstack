@@ -22,11 +22,7 @@ export const createMemoryAuthRepository = (): AuthRepository => {
         const user = users.find((candidate) => candidate.email === email);
         return of(user ? { ...user } : undefined);
       }),
-    createUser$: (
-      email: string,
-      passwordHash: string,
-      options?: RepositoryOperationOptions,
-    ) =>
+    createUser$: (email: string, passwordHash: string, options?: RepositoryOperationOptions) =>
       defer(() => {
         throwIfRepositoryOperationAborted(options?.signal);
         if (users.some((candidate) => candidate.email === email)) {
@@ -41,10 +37,7 @@ export const createMemoryAuthRepository = (): AuthRepository => {
         const publicUser: AuthUser = { id: user.id, email: user.email };
         return of(publicUser);
       }),
-    createSession$: (
-      session: CreateStoredAuthSession,
-      options?: RepositoryOperationOptions,
-    ) =>
+    createSession$: (session: CreateStoredAuthSession, options?: RepositoryOperationOptions) =>
       defer(() => {
         throwIfRepositoryOperationAborted(options?.signal);
         const user = users.find((candidate) => candidate.id === session.userId);
@@ -72,10 +65,7 @@ export const createMemoryAuthRepository = (): AuthRepository => {
             : undefined,
         );
       }),
-    deleteSessionByTokenHash$: (
-      tokenHash,
-      options?: RepositoryOperationOptions,
-    ) =>
+    deleteSessionByTokenHash$: (tokenHash, options?: RepositoryOperationOptions) =>
       defer(() => {
         throwIfRepositoryOperationAborted(options?.signal);
         sessions.delete(tokenHash);

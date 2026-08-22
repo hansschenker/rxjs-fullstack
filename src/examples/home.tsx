@@ -1,4 +1,3 @@
-
 export interface HomeModel {
   readonly title: string;
   readonly milestone: string;

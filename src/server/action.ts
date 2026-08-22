@@ -11,10 +11,7 @@ export interface ServerActionContext {
 
 export interface ServerActionHandler<TInput, TOutput> {
   readonly parse: (value: unknown) => TInput;
-  readonly run: (
-    input: TInput,
-    context: ServerActionContext,
-  ) => Observable<TOutput>;
+  readonly run: (input: TInput, context: ServerActionContext) => Observable<TOutput>;
   readonly successStatus?: number;
 }
 

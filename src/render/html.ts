@@ -1,10 +1,6 @@
 import { isObservable } from 'rxjs';
 
-import {
-  isViewNode,
-  type ElementNode,
-  type ViewChild,
-} from '../jsx/runtime';
+import { isViewNode, type ElementNode, type ViewChild } from '../jsx/runtime';
 
 const VOID_ELEMENTS = new Set([
   'area',
@@ -32,7 +28,13 @@ export const escapeHtml = (value: string): string =>
     .replaceAll("'", '&#39;');
 
 const renderAttribute = (name: string, value: unknown): string => {
-  if (name === 'children' || name === 'on' || value === undefined || value === null || value === false) {
+  if (
+    name === 'children' ||
+    name === 'on' ||
+    value === undefined ||
+    value === null ||
+    value === false
+  ) {
     return '';
   }
 
@@ -134,9 +136,5 @@ export const renderDocumentSuffix = ({
   return `${scripts}</body></html>`;
 };
 
-export const renderDocument = ({
-  title,
-  body,
-  jsonScripts = [],
-}: HtmlDocumentOptions): string =>
+export const renderDocument = ({ title, body, jsonScripts = [] }: HtmlDocumentOptions): string =>
   `${renderDocumentPrefix({ title, body })}${renderDocumentSuffix({ jsonScripts })}`;

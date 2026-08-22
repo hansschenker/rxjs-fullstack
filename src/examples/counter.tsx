@@ -1,6 +1,5 @@
 import { map, scan, shareReplay, startWith, Subject } from 'rxjs';
 
-
 export const Counter = () => {
   const increment$ = new Subject<MouseEvent>();
 

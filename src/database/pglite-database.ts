@@ -18,9 +18,7 @@ interface MigrationRow {
   readonly version: number;
 }
 
-export const preservePgliteProcessExitCode = async <T>(
-  operation: () => Promise<T>,
-): Promise<T> => {
+export const preservePgliteProcessExitCode = async <T>(operation: () => Promise<T>): Promise<T> => {
   const previousExitCode = process.exitCode;
   try {
     return await operation();
@@ -59,9 +57,7 @@ const applyMigrations = async (database: PGlite): Promise<void> => {
 };
 
 const seedDatabase = async (database: PGlite): Promise<void> => {
-  const result = await database.query<CountRow>(
-    'SELECT COUNT(*)::int AS count FROM todos',
-  );
+  const result = await database.query<CountRow>('SELECT COUNT(*)::int AS count FROM todos');
   const count = result.rows[0]?.count ?? 0;
   if (count > 0) {
     return;
@@ -69,10 +65,10 @@ const seedDatabase = async (database: PGlite): Promise<void> => {
 
   await database.transaction(async (transaction) => {
     for (const todo of seedTodos) {
-      await transaction.query(
-        'INSERT INTO todos (title, done) VALUES ($1, $2)',
-        [todo.title, todo.done],
-      );
+      await transaction.query('INSERT INTO todos (title, done) VALUES ($1, $2)', [
+        todo.title,
+        todo.done,
+      ]);
     }
   });
 };

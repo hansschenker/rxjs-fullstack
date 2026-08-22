@@ -35,15 +35,10 @@ export const createPgliteTodoRepositoryForDatabase = (
   list$: (options?: RepositoryOperationOptions) =>
     defer(async () => {
       throwIfRepositoryOperationAborted(options?.signal);
-      const result = await database.query<TodoRow>(
-        'SELECT id, title, done FROM todos ORDER BY id',
-      );
+      const result = await database.query<TodoRow>('SELECT id, title, done FROM todos ORDER BY id');
       return result.rows.map(todoFromRow);
     }),
-  create$: (
-    { title }: CreateTodoInput,
-    options?: RepositoryOperationOptions,
-  ) =>
+  create$: ({ title }: CreateTodoInput, options?: RepositoryOperationOptions) =>
     defer(async () => {
       throwIfRepositoryOperationAborted(options?.signal);
       const result = await database.query<TodoRow>(

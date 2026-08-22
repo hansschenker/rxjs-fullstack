@@ -18,10 +18,7 @@ const toBase64Url = (value: Uint8Array): string => {
   for (const byte of value) {
     binary += String.fromCharCode(byte);
   }
-  return btoa(binary)
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/u, '');
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
 };
 
 const fromBase64Url = (value: string): Uint8Array => {
@@ -31,8 +28,7 @@ const fromBase64Url = (value: string): Uint8Array => {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 };
 
-const randomBytes = (length: number): Uint8Array =>
-  crypto.getRandomValues(new Uint8Array(length));
+const randomBytes = (length: number): Uint8Array => crypto.getRandomValues(new Uint8Array(length));
 
 const toArrayBuffer = (value: Uint8Array): ArrayBuffer => {
   const copy = new Uint8Array(value.length);
@@ -77,10 +73,7 @@ const timingSafeEqual = (left: Uint8Array, right: Uint8Array): boolean => {
   return difference === 0;
 };
 
-export const constantTimeEqualString = (
-  left: string,
-  right: string,
-): boolean =>
+export const constantTimeEqualString = (left: string, right: string): boolean =>
   timingSafeEqual(textEncoder.encode(left), textEncoder.encode(right));
 
 export const createPbkdf2PasswordHasher = ({
@@ -105,17 +98,12 @@ export const createPbkdf2PasswordHasher = ({
     }
 
     const expected = fromBase64Url(hashText);
-    const actual = await derivePassword(
-      password,
-      fromBase64Url(saltText),
-      parsedIterations,
-    );
+    const actual = await derivePassword(password, fromBase64Url(saltText), parsedIterations);
     return timingSafeEqual(actual, expected);
   },
 });
 
-export const createOpaqueToken = (): string =>
-  toBase64Url(randomBytes(OPAQUE_TOKEN_BYTES));
+export const createOpaqueToken = (): string => toBase64Url(randomBytes(OPAQUE_TOKEN_BYTES));
 
 export const hashOpaqueToken = async (token: string): Promise<string> => {
   const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(token));

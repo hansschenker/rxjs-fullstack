@@ -44,11 +44,7 @@ export const createPgliteAuthRepositoryForDatabase = (
       const row = result.rows[0];
       return row ? userFromRow(row) : undefined;
     }),
-  createUser$: (
-    email: string,
-    passwordHash: string,
-    options?: RepositoryOperationOptions,
-  ) =>
+  createUser$: (email: string, passwordHash: string, options?: RepositoryOperationOptions) =>
     defer(async () => {
       throwIfRepositoryOperationAborted(options?.signal);
       const result = await database.query<UserRow>(
@@ -67,10 +63,7 @@ export const createPgliteAuthRepositoryForDatabase = (
       const user: AuthUser = { id: row.id, email: row.email };
       return user;
     }),
-  createSession$: (
-    session: CreateStoredAuthSession,
-    options?: RepositoryOperationOptions,
-  ) =>
+  createSession$: (session: CreateStoredAuthSession, options?: RepositoryOperationOptions) =>
     defer(async () => {
       throwIfRepositoryOperationAborted(options?.signal);
       await database.query(
@@ -78,18 +71,10 @@ export const createPgliteAuthRepositoryForDatabase = (
           INSERT INTO auth_sessions (token_hash, user_id, csrf_hash, expires_at)
           VALUES ($1, $2, $3, $4)
         `,
-        [
-          session.tokenHash,
-          session.userId,
-          session.csrfHash,
-          session.expiresAt.toISOString(),
-        ],
+        [session.tokenHash, session.userId, session.csrfHash, session.expiresAt.toISOString()],
       );
     }),
-  findSessionByTokenHash$: (
-    tokenHash,
-    options?: RepositoryOperationOptions,
-  ) =>
+  findSessionByTokenHash$: (tokenHash, options?: RepositoryOperationOptions) =>
     defer(async () => {
       throwIfRepositoryOperationAborted(options?.signal);
       const result = await database.query<SessionRow>(
@@ -112,15 +97,10 @@ export const createPgliteAuthRepositoryForDatabase = (
       };
       return session;
     }),
-  deleteSessionByTokenHash$: (
-    tokenHash,
-    options?: RepositoryOperationOptions,
-  ) =>
+  deleteSessionByTokenHash$: (tokenHash, options?: RepositoryOperationOptions) =>
     defer(async () => {
       throwIfRepositoryOperationAborted(options?.signal);
-      await database.query('DELETE FROM auth_sessions WHERE token_hash = $1', [
-        tokenHash,
-      ]);
+      await database.query('DELETE FROM auth_sessions WHERE token_hash = $1', [tokenHash]);
     }),
   close,
 });

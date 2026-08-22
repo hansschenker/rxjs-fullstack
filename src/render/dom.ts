@@ -1,11 +1,6 @@
 import { isObservable, Subscription } from 'rxjs';
 
-import {
-  isViewNode,
-  type ElementNode,
-  type EventObservers,
-  type ViewChild,
-} from '../jsx/runtime';
+import { isViewNode, type ElementNode, type EventObservers, type ViewChild } from '../jsx/runtime';
 
 export interface MountOptions {
   /**
@@ -25,8 +20,7 @@ const reportUnhandledError: ErrorReporter = (error) => {
   });
 };
 
-const normalizeAttributeName = (name: string): string =>
-  name === 'className' ? 'class' : name;
+const normalizeAttributeName = (name: string): string => (name === 'className' ? 'class' : name);
 
 // value/checked/selected attributes only set a control's DEFAULT state; once
 // the user has interacted, the attribute no longer reflects into the control.
@@ -76,11 +70,7 @@ const setElementValue = (element: Element, name: string, value: unknown): void =
   element.setAttribute(attributeName, String(value));
 };
 
-const bindEvents = (
-  element: Element,
-  observers: EventObservers,
-  lifetime: Subscription,
-): void => {
+const bindEvents = (element: Element, observers: EventObservers, lifetime: Subscription): void => {
   for (const [eventName, observer] of Object.entries(observers)) {
     if (!observer) {
       continue;

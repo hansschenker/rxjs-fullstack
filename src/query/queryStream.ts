@@ -160,8 +160,8 @@ export class QueryStream<
       TQueryKey
     >,
   ): void {
-    const prevOptions = this.options;
     const prevQuery = this.#currentQuery;
+    const prevOptions = this.options;
 
     this.options = this.#client.defaultQueryOptions(options);
     this.#assertValidEnabled();
@@ -360,7 +360,6 @@ export class QueryStream<
     >,
   ): QueryResult<TData, TError> {
     const prevQuery = this.#currentQuery;
-    const prevOptions = this.options;
     const prevResult = this.#currentResult as
       QueryResult<TData, TError> | undefined;
     const prevResultState = this.#currentResultState;

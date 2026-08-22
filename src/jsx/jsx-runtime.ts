@@ -1,9 +1,4 @@
-import {
-  Fragment,
-  jsx as createViewChild,
-  type JsxType,
-  type ViewChild,
-} from './runtime';
+import { Fragment, jsx as createViewChild, type JsxType, type ViewChild } from './runtime';
 
 const toChildArray = (children: unknown): readonly unknown[] => {
   if (children === undefined) {

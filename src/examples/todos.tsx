@@ -1,13 +1,4 @@
-import {
-  Subject,
-  catchError,
-  concatMap,
-  exhaustMap,
-  map,
-  of,
-  startWith,
-  tap,
-} from 'rxjs';
+import { Subject, catchError, concatMap, exhaustMap, map, of, startWith, tap } from 'rxjs';
 import { QueryClient } from '../query';
 
 import { createTodoInput, type CreateTodoInput } from '../domain/todos';
@@ -62,12 +53,7 @@ export const TodoSnapshot = ({ todos }: { readonly todos: readonly Todo[] }) => 
 );
 
 const TodoFormFields = (): ViewChild => [
-  <input
-    name="title"
-    type="text"
-    placeholder="What needs doing?"
-    required
-  />,
+  <input name="title" type="text" placeholder="What needs doing?" required />,
   <button type="submit">Add</button>,
 ];
 
@@ -100,9 +86,7 @@ export const TodoApp = () => {
       }
 
       return createTodo$(submission.input).pipe(
-        concatMap(() =>
-          queryClient.invalidateQueries({ queryKey: todosQuery.queryKey }),
-        ),
+        concatMap(() => queryClient.invalidateQueries({ queryKey: todosQuery.queryKey })),
         tap(() => submission.form.reset()),
         map(() => 'Saved.'),
         startWith('Saving...'),
@@ -115,9 +99,7 @@ export const TodoApp = () => {
   return (
     <section>
       <h2>Todos</h2>
-      <p>
-        Fetched through Query/Cache and created through an RxJS server action.
-      </p>
+      <p>Fetched through Query/Cache and created through an RxJS server action.</p>
       {list$}
       <form on={{ submit: submit$ }}>
         <TodoFormFields />
