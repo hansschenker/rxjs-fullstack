@@ -64,16 +64,16 @@ assert(
 );
 
 const response = await app.request('/');
-assertEqual(response.status, 200, 'M04-M12: root route should return HTTP 200.');
+assertEqual(response.status, 200, 'M04-M13: root route should return HTTP 200.');
 const body = await response.text();
 assert(body.includes('<h1>RxJS Fullstack</h1>'), 'M04: root route should return SSR HTML.');
 assert(
-  body.includes('M01-M12 vertical slice with authentication'),
-  'M12: SSR route should report the current milestone.',
+  body.includes('M01-M13 vertical slice with streaming SSR'),
+  'M13: SSR route should report the current milestone.',
 );
 
 const counterResponse = await app.request('/counter');
-assertEqual(counterResponse.status, 200, 'M05-M12: counter route should return HTTP 200.');
+assertEqual(counterResponse.status, 200, 'M05-M13: counter route should return HTTP 200.');
 const counterBody = await counterResponse.text();
 assert(counterBody.includes('<h1>RxJS Fullstack Counter</h1>'), 'M05: router should render nested counter route.');
 
@@ -130,7 +130,7 @@ try {
 assert(hrefWrongParamRejected, 'M05: href should throw for unrelated parameter names.');
 
 const todosResponse = await app.request('/todos');
-assertEqual(todosResponse.status, 200, 'M05-M12: todos route should return HTTP 200.');
+assertEqual(todosResponse.status, 200, 'M05-M13: todos route should return HTTP 200.');
 const todosBody = await todosResponse.text();
 assert(todosBody.includes('<h1>RxJS Fullstack Todos</h1>'), 'M05: todos route should render SSR HTML.');
 assert(
@@ -149,8 +149,12 @@ assert(
 const staticPathnames = collectStaticPathnames(routes);
 assertEqual(
   JSON.stringify(staticPathnames),
-  JSON.stringify(['/', '/about', '/counter', '/login', '/register', '/todos']),
-  'M09-M12: static path discovery should include public auth pages and exclude the parameterized protected account route.',
+  JSON.stringify(['/', '/about', '/counter', '/login', '/register', '/streaming', '/todos']),
+  'M09-M13: static path discovery should include public auth/streaming pages and exclude the parameterized protected account route.',
+);
+assert(
+  staticPathnames.includes('/streaming'),
+  'M13: the concrete streaming route should remain eligible for buffered static generation.',
 );
 assert(
   !staticPathnames.includes('/account/$section'),
@@ -321,4 +325,4 @@ assertEqual(
   'M07: Todo creation should no longer use the ad-hoc POST /api/todos endpoint.',
 );
 
-console.log('M01-M12 verification passed.');
+console.log('M01-M13 verification passed.');
