@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An experimental minimal fullstack framework whose execution model is RxJS: TypeScript JSX (no React) describes views, RxJS owns state/effects/cancellation, `rxjs-router` owns routing, Hono owns HTTP, and Bun hosts/builds the app. The README is the design document and milestone narrative.
+An experimental minimal fullstack framework whose execution model is RxJS: TypeScript JSX (no React) describes views, RxJS owns state/effects/cancellation, `rxjs-router` owns routing, Hono owns HTTP, and Bun hosts/builds the app. The README is the canonical design document, milestone narrative, and source for the public `rxjs-fullstack` project page.
 
 Current milestones:
 
@@ -66,9 +66,29 @@ The sibling production install is required because browser bundling follows `rxj
 - **Hono owns HTTP; Bun is only the runtime/build adapter.**
 - **No React.** Do not add React/ReactDOM or React lifecycle/state idioms.
 
+## README / project-page documentation standard
+
+The root `README.md` is the canonical source for the public project page. Every milestone must keep it synchronized with the implementation and should be written for an interested technical reader, not only for contributors reading source code.
+
+For each new milestone, document as applicable:
+
+- the problem or limitation that existed before the milestone,
+- the user-visible/framework capability that the milestone adds,
+- what values/events flow over time,
+- where subscription starts execution,
+- concurrency and flattening policy,
+- cancellation/teardown ownership,
+- client/server and pure/effect boundaries,
+- which technology owns each responsibility,
+- representative code or timeline diagrams,
+- the source-file map for the implementation,
+- the executable verification/invariants that prove the milestone.
+
+Do not reduce completed milestone sections to terse changelog entries. The README should remain suitable as the basis for the `rxjs-fullstack` project page and as a readable architectural history of how the framework evolved.
+
 ## Working style
 
 - TypeScript strict; no new `any`; 2-space indent in application/framework files.
 - Every new capability needs a corresponding invariant/check in `scripts/verify.tsx`.
-- Keep the README milestone narrative synchronized with behavior.
+- Keep the README milestone narrative synchronized with behavior and maintain the project-page documentation standard above.
 - When triggered from an issue (`@claude` mention): work on a branch, open a PR, report `bun run check` results in the PR body, and do not merge.
