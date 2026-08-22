@@ -4,12 +4,9 @@ export const MIN_PASSWORD_LENGTH = 12;
 export const MAX_PASSWORD_LENGTH = 128;
 export const MAX_EMAIL_LENGTH = 254;
 
-export const normalizeEmail = (email: string): string =>
-  email.trim().toLowerCase();
+export const normalizeEmail = (email: string): string => email.trim().toLowerCase();
 
-export const parseAuthCredentials = (
-  value: unknown,
-): AuthCredentials | undefined => {
+export const parseAuthCredentials = (value: unknown): AuthCredentials | undefined => {
   if (typeof value !== 'object' || value === null) {
     return undefined;
   }
@@ -27,10 +24,7 @@ export const parseAuthCredentials = (
     email.length <= MAX_EMAIL_LENGTH &&
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const hasPasswordLength =
-    passwordValue.length >= MIN_PASSWORD_LENGTH &&
-    passwordValue.length <= MAX_PASSWORD_LENGTH;
+    passwordValue.length >= MIN_PASSWORD_LENGTH && passwordValue.length <= MAX_PASSWORD_LENGTH;
 
-  return hasEmailShape && hasPasswordLength
-    ? { email, password: passwordValue }
-    : undefined;
+  return hasEmailShape && hasPasswordLength ? { email, password: passwordValue } : undefined;
 };

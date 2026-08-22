@@ -1,21 +1,12 @@
-import {
-  normalizeRoutes,
-  type AnyRoute,
-  type RouteNode,
-} from 'rxjs-router';
+import { normalizeRoutes, type AnyRoute, type RouteNode } from 'rxjs-router';
 
-import {
-  renderRouteDocument,
-  type RenderRouteDocumentOptions,
-} from '../render/page';
+import { renderRouteDocument, type RenderRouteDocumentOptions } from '../render/page';
 
 const STATIC_ORIGIN = 'http://rxjs-fullstack.static';
 
 const hasBuildTimeParams = (pathname: string): boolean => pathname.includes('$');
 
-export const collectStaticPathnames = (
-  routes: readonly AnyRoute[],
-): readonly string[] => {
+export const collectStaticPathnames = (routes: readonly AnyRoute[]): readonly string[] => {
   const pathnames = new Set<string>();
 
   const visit = (node: RouteNode): void => {
@@ -39,9 +30,7 @@ export const staticOutputPath = (pathname: string): string => {
   const normalized = pathname.replace(/\/+$/, '') || '/';
   const relativePath = normalized.slice(1);
 
-  return relativePath
-    ? `dist/static/${relativePath}/index.html`
-    : 'dist/static/index.html';
+  return relativePath ? `dist/static/${relativePath}/index.html` : 'dist/static/index.html';
 };
 
 export interface StaticPage {

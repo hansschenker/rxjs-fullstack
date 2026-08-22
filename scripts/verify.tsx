@@ -12,11 +12,7 @@ import { renderToString } from '../src/render/html';
 import { generatedRouteFiles, routes } from '../src/routes.generated';
 import { executeServerAction$ } from '../src/server/action';
 import { app } from '../src/server/app';
-import {
-  collectStaticPathnames,
-  renderStaticPage,
-  staticOutputPath,
-} from '../src/ssg/static';
+import { collectStaticPathnames, renderStaticPage, staticOutputPath } from '../src/ssg/static';
 import { createTodosSampleApp } from './serve-todos';
 
 const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
@@ -46,7 +42,11 @@ const lazyHtml$ = defer(() => {
 }).pipe(map(renderToString));
 
 assertEqual(executions, 0, 'M03: SSR Observable must remain lazy before subscription.');
-assertEqual(await firstValueFrom(lazyHtml$), '<p>lazy</p>', 'M03: SSR pipeline should render HTML.');
+assertEqual(
+  await firstValueFrom(lazyHtml$),
+  '<p>lazy</p>',
+  'M03: SSR pipeline should render HTML.',
+);
 assertEqual(executions, 1, 'M03: firstValueFrom should create exactly one subscription.');
 
 let observableChildRejected = false;
@@ -73,7 +73,10 @@ assert(
 const counterResponse = await app.request('/counter');
 assertEqual(counterResponse.status, 200, 'M05-M13: counter route should return HTTP 200.');
 const counterBody = await counterResponse.text();
-assert(counterBody.includes('<h1>RxJS Fullstack Counter</h1>'), 'M05: router should render nested counter route.');
+assert(
+  counterBody.includes('<h1>RxJS Fullstack Counter</h1>'),
+  'M05: router should render nested counter route.',
+);
 
 const aboutResponse = await app.request('/about');
 assertEqual(aboutResponse.status, 200, 'M06: generated about route should return HTTP 200.');
@@ -90,7 +93,11 @@ assert(
 const loginResponse = await app.request('/login');
 assertEqual(loginResponse.status, 200, 'M12: login route should be a public SSR page.');
 const accountResponse = await app.request('/account/profile');
-assertEqual(accountResponse.status, 302, 'M12: protected account route should redirect anonymous requests.');
+assertEqual(
+  accountResponse.status,
+  302,
+  'M12: protected account route should redirect anonymous requests.',
+);
 
 const health = await app.request('/health');
 assertEqual(health.status, 200, 'M04: health route should return HTTP 200.');
@@ -130,8 +137,14 @@ assert(hrefWrongParamRejected, 'M05: buildPath should throw for unrelated parame
 const helloResponse = await app.request('/hello/Erik%20Meijer');
 assertEqual(helloResponse.status, 200, 'M05: hello route should return HTTP 200.');
 const helloBody = await helloResponse.text();
-assert(helloBody.includes('<h1>Hello Erik Meijer</h1>'), 'M05: hello route should render the decoded path param.');
-assert(helloBody.includes('<title>Hello Erik Meijer</title>'), 'M05: hello route title should derive from the param.');
+assert(
+  helloBody.includes('<h1>Hello Erik Meijer</h1>'),
+  'M05: hello route should render the decoded path param.',
+);
+assert(
+  helloBody.includes('<title>Hello Erik Meijer</title>'),
+  'M05: hello route title should derive from the param.',
+);
 assert(
   generatedRouteFiles.includes('hello.tsx'),
   'M06: the hello route should be a discovered route module, not manual registration.',
@@ -140,7 +153,10 @@ assert(
 const todosResponse = await app.request('/todos');
 assertEqual(todosResponse.status, 200, 'M05-M13: todos route should return HTTP 200.');
 const todosBody = await todosResponse.text();
-assert(todosBody.includes('<h1>RxJS Fullstack Todos</h1>'), 'M05: todos route should render SSR HTML.');
+assert(
+  todosBody.includes('<h1>RxJS Fullstack Todos</h1>'),
+  'M05: todos route should render SSR HTML.',
+);
 assert(
   todosBody.includes('Port TanStack Query to RxJS'),
   'M08: Todos SSR should contain server-prefetched query data instead of a loading placeholder.',
@@ -223,7 +239,10 @@ assert(
 const todosApi = await app.request('/api/todos');
 assertEqual(todosApi.status, 200, 'M05: todos API should return HTTP 200.');
 const todosJson = (await todosApi.json()) as ReadonlyArray<{ readonly id: number }>;
-assert(Array.isArray(todosJson) && todosJson.length > 0, 'M05: todos API should return seeded todos.');
+assert(
+  Array.isArray(todosJson) && todosJson.length > 0,
+  'M05: todos API should return seeded todos.',
+);
 
 // M05 Query/Cache behavior: the reactive query surface must stay lazy, dedupe
 // concurrent subscribers, serve fresh cache hits without refetching, refetch
@@ -253,8 +272,16 @@ assertEqual(
   1,
   'M05: concurrent subscriptions with one query key should share a single queryFn execution.',
 );
-assertEqual(firstDedup.data, 1, 'M05: the first subscriber should receive the shared fetch result.');
-assertEqual(secondDedup.data, 1, 'M05: the second subscriber should receive the shared fetch result.');
+assertEqual(
+  firstDedup.data,
+  1,
+  'M05: the first subscriber should receive the shared fetch result.',
+);
+assertEqual(
+  secondDedup.data,
+  1,
+  'M05: the second subscriber should receive the shared fetch result.',
+);
 
 const cachedDedup = await firstValueFrom(dedup$.pipe(filter((result) => result.isSuccess)));
 assertEqual(
@@ -284,16 +311,18 @@ const invalidationSub = invalidation$.subscribe((result) => {
 await firstValueFrom(invalidation$.pipe(filter((result) => result.isSuccess)));
 assertEqual(invalidationExecutions, 1, 'M05: an observed query should fetch once on mount.');
 
-await firstValueFrom(
-  behaviorClient.invalidateQueries({ queryKey: invalidationQuery.queryKey }),
-);
+await firstValueFrom(behaviorClient.invalidateQueries({ queryKey: invalidationQuery.queryKey }));
 assertEqual(
   invalidationExecutions,
   2,
   'M05: invalidateQueries should refetch the actively observed query.',
 );
 await new Promise((resolve) => setTimeout(resolve, 0));
-assertEqual(refetchedValue, 2, 'M05: the standing subscription should receive the refetched value.');
+assertEqual(
+  refetchedValue,
+  2,
+  'M05: the standing subscription should receive the refetched value.',
+);
 invalidationSub.unsubscribe();
 
 let gcExecutions = 0;
@@ -329,7 +358,11 @@ const doubler = behaviorClient.mutation<number, Error, number>({
 const doubled$ = doubler.mutate$(21);
 assertEqual(mutationExecutions, 0, 'M05: mutate$ must remain lazy before subscription.');
 assertEqual(await firstValueFrom(doubled$), 42, 'M05: mutate$ should emit the mutation result.');
-assertEqual(mutationExecutions, 1, 'M05: one mutate$ subscription should run the mutation exactly once.');
+assertEqual(
+  mutationExecutions,
+  1,
+  'M05: one mutate$ subscription should run the mutation exactly once.',
+);
 assertEqual(mutationSettled, 1, 'M05: onSettled should run after the mutation completes.');
 
 const serverQueryClient = new QueryClient();
@@ -349,9 +382,7 @@ const dehydratedState = dehydrate(serverQueryClient);
 const browserQueryClient = new QueryClient();
 const didHydrate = hydrateQueryClientFromDocument(browserQueryClient, {
   getElementById: (id) =>
-    id === QUERY_STATE_SCRIPT_ID
-      ? { textContent: JSON.stringify(dehydratedState) }
-      : null,
+    id === QUERY_STATE_SCRIPT_ID ? { textContent: JSON.stringify(dehydratedState) } : null,
 });
 assert(didHydrate, 'M08: browser bootstrap should restore serialized Query/Cache state.');
 
@@ -394,23 +425,47 @@ const lazyAction$ = executeServerAction$(
   { value: 21 },
   { request: actionRequest, signal: actionRequest.signal },
 );
-assertEqual(actionParses, 0, 'M07: server action input parsing must remain lazy before subscription.');
-assertEqual(actionExecutions, 0, 'M07: server action handler must remain lazy before subscription.');
-assertEqual(await firstValueFrom(lazyAction$), 42, 'M07: server action should emit its typed result.');
+assertEqual(
+  actionParses,
+  0,
+  'M07: server action input parsing must remain lazy before subscription.',
+);
+assertEqual(
+  actionExecutions,
+  0,
+  'M07: server action handler must remain lazy before subscription.',
+);
+assertEqual(
+  await firstValueFrom(lazyAction$),
+  42,
+  'M07: server action should emit its typed result.',
+);
 assertEqual(actionParses, 1, 'M07: server action input should be parsed once per subscription.');
-assertEqual(actionExecutions, 1, 'M07: server action handler should execute once per subscription.');
+assertEqual(
+  actionExecutions,
+  1,
+  'M07: server action handler should execute once per subscription.',
+);
 
 const createTodoActionResponse = await app.request('/api/actions/todos.create', {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ title: 'Prove M07 server actions' }),
 });
-assertEqual(createTodoActionResponse.status, 201, 'M07: create-todo server action should return HTTP 201.');
+assertEqual(
+  createTodoActionResponse.status,
+  201,
+  'M07: create-todo server action should return HTTP 201.',
+);
 const createdTodo = (await createTodoActionResponse.json()) as {
   readonly id: number;
   readonly title: string;
 };
-assertEqual(createdTodo.title, 'Prove M07 server actions', 'M07: server action should return the created Todo.');
+assertEqual(
+  createdTodo.title,
+  'Prove M07 server actions',
+  'M07: server action should return the created Todo.',
+);
 
 const todosAfterAction = await app.request('/api/todos');
 const todosAfterActionJson = (await todosAfterAction.json()) as ReadonlyArray<{
@@ -427,7 +482,11 @@ const invalidActionResponse = await app.request('/api/actions/todos.create', {
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ title: '   ' }),
 });
-assertEqual(invalidActionResponse.status, 400, 'M07: invalid server-action input should return HTTP 400.');
+assertEqual(
+  invalidActionResponse.status,
+  400,
+  'M07: invalid server-action input should return HTTP 400.',
+);
 
 const legacyMutationResponse = await app.request('/api/todos', {
   method: 'POST',

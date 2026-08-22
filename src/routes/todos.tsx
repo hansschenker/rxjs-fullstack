@@ -8,10 +8,7 @@ import { rootBaseRoute } from './root';
 import type { PageData } from './types';
 
 const isServerRouteContext = (value: unknown): value is ServerRouteContext =>
-  typeof value === 'object' &&
-  value !== null &&
-  'queryClient' in value &&
-  'fetch' in value;
+  typeof value === 'object' && value !== null && 'queryClient' in value && 'fetch' in value;
 
 const loadTodosForSsr = async (
   context: ServerRouteContext,
@@ -41,21 +38,15 @@ export const todosRoute = createChildRoute<typeof rootBaseRoute>()({
   path: 'todos',
   loader: async ({ parentData, context, signal }): Promise<PageData> => {
     const serverContext = isServerRouteContext(context) ? context : undefined;
-    const todos = serverContext
-      ? await loadTodosForSsr(serverContext, signal)
-      : undefined;
+    const todos = serverContext ? await loadTodosForSsr(serverContext, signal) : undefined;
 
     return {
       title: `${parentData.appName} Todos`,
       view: (
         <main>
           <h1>{parentData.appName} Todos</h1>
-          <p>
-            Queries use Query/Cache; form mutations use RxJS server actions.
-          </p>
-          <div id="app">
-            {todos ? <TodoSnapshot todos={todos} /> : <TodoApp />}
-          </div>
+          <p>Queries use Query/Cache; form mutations use RxJS server actions.</p>
+          <div id="app">{todos ? <TodoSnapshot todos={todos} /> : <TodoApp />}</div>
         </main>
       ),
     };

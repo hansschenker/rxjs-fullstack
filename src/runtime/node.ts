@@ -11,9 +11,7 @@ const parsePort = (value: string | undefined): number => {
   }
 
   const port = Number(value);
-  return Number.isInteger(port) && port > 0 && port <= 65_535
-    ? port
-    : DEFAULT_NODE_PORT;
+  return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : DEFAULT_NODE_PORT;
 };
 
 export const nodePort = parsePort(process.env.PORT);

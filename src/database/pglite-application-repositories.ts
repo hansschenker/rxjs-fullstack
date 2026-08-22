@@ -21,14 +21,8 @@ export const createPgliteApplicationRepositories = async (
 ): Promise<PgliteApplicationRepositories> => {
   const opened = await openPgliteDatabase(options);
   return {
-    todosRepository: createPgliteTodoRepositoryForDatabase(
-      opened.database,
-      opened.close,
-    ),
-    authRepository: createPgliteAuthRepositoryForDatabase(
-      opened.database,
-      opened.close,
-    ),
+    todosRepository: createPgliteTodoRepositoryForDatabase(opened.database, opened.close),
+    authRepository: createPgliteAuthRepositoryForDatabase(opened.database, opened.close),
     close: opened.close,
   };
 };

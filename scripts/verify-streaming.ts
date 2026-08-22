@@ -2,42 +2,27 @@ import { Observable, of, throwError } from 'rxjs';
 
 import { QUERY_STATE_SCRIPT_ID } from '../src/query';
 import { renderRouteDocument } from '../src/render/page';
-import {
-  type HtmlStreamSink,
-  writeDocumentStream,
-} from '../src/render/stream';
+import { type HtmlStreamSink, writeDocumentStream } from '../src/render/stream';
 import { routes } from '../src/routes';
 import { app } from '../src/server/app';
 
 const STREAM_VERIFY_TIMEOUT_MS = 5_000;
 
-const assert: (condition: unknown, message: string) => asserts condition = (
-  condition,
-  message,
-) => {
+const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
     throw new Error(message);
   }
 };
 
-const assertEqual = (
-  actual: unknown,
-  expected: unknown,
-  message: string,
-): void => {
+const assertEqual = (actual: unknown, expected: unknown, message: string): void => {
   if (!Object.is(actual, expected)) {
-    throw new Error(
-      `${message}\nExpected: ${String(expected)}\nActual: ${String(actual)}`,
-    );
+    throw new Error(`${message}\nExpected: ${String(expected)}\nActual: ${String(actual)}`);
   }
 };
 
 const withDeadline = <T>(promise: Promise<T>, message: string): Promise<T> =>
   new Promise<T>((resolve, reject) => {
-    const handle = setTimeout(
-      () => reject(new Error(message)),
-      STREAM_VERIFY_TIMEOUT_MS,
-    );
+    const handle = setTimeout(() => reject(new Error(message)), STREAM_VERIFY_TIMEOUT_MS);
     promise.then(
       (value) => {
         clearTimeout(handle);
@@ -77,7 +62,10 @@ const first = await withDeadline(
 assert(!first.done && first.value, 'M13: the response should emit an initial shell chunk.');
 const firstHtml = decoder.decode(first.value, { stream: true });
 assert(firstHtml.includes('<!doctype html>'), 'M13: first chunk should begin the HTML document.');
-assert(firstHtml.includes('id="streaming-shell"'), 'M13: first chunk should contain the route shell.');
+assert(
+  firstHtml.includes('id="streaming-shell"'),
+  'M13: first chunk should contain the route shell.',
+);
 assert(
   !firstHtml.includes('id="streaming-todos"'),
   'M13: first chunk must arrive before the delayed query-backed content.',
@@ -124,7 +112,10 @@ const buffered = await renderRouteDocument({
   request: new Request('http://rxjs-fullstack.streaming-verify/streaming'),
   fetch: fetchFromApp,
 });
-assert(buffered.type === 'page', 'M13: buffered rendering should collect a streaming page successfully.');
+assert(
+  buffered.type === 'page',
+  'M13: buffered rendering should collect a streaming page successfully.',
+);
 assert(
   buffered.html.includes('id="streaming-shell"') &&
     buffered.html.includes('id="streaming-progress"') &&

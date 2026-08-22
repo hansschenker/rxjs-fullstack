@@ -1,14 +1,4 @@
-import {
-  concat,
-  concatMap,
-  filter,
-  fromEvent,
-  map,
-  of,
-  take,
-  takeUntil,
-  timer,
-} from 'rxjs';
+import { concat, concatMap, filter, fromEvent, map, of, take, takeUntil, timer } from 'rxjs';
 import { createChildRoute } from 'rxjs-router';
 
 import { TodoSnapshot } from '../examples/todos';
@@ -18,17 +8,12 @@ import { rootBaseRoute } from './root';
 import type { PageData } from './types';
 
 const isServerRouteContext = (value: unknown): value is ServerRouteContext =>
-  typeof value === 'object' &&
-  value !== null &&
-  'queryClient' in value &&
-  'fetch' in value;
+  typeof value === 'object' && value !== null && 'queryClient' in value && 'fetch' in value;
 
 const aborted$ = (signal: AbortSignal) =>
   signal.aborted ? of(signal.reason) : fromEvent(signal, 'abort');
 
-const streamedTodos$ = (
-  context: ServerRouteContext,
-) =>
+const streamedTodos$ = (context: ServerRouteContext) =>
   timer(15).pipe(
     concatMap(() =>
       context.queryClient.query$(createTodosQuery(context.fetch)).pipe(

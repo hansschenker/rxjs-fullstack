@@ -19,11 +19,7 @@ export const CSRF_COOKIE_NAME = 'csrf';
 const cookieSecurity = (context: Context): boolean =>
   new URL(context.req.url).protocol === 'https:';
 
-const setAuthCookies = (
-  context: Context,
-  sessionToken: string,
-  csrfToken: string,
-): void => {
+const setAuthCookies = (context: Context, sessionToken: string, csrfToken: string): void => {
   const secure = cookieSecurity(context);
   const maxAge = Math.floor(AUTH_SESSION_TTL_MS / 1_000);
   setCookie(context, SESSION_COOKIE_NAME, sessionToken, {
@@ -98,9 +94,7 @@ export const createAuthHttp = ({ authService }: CreateAuthHttpOptions) => {
     }
 
     try {
-      await firstValueFrom(
-        authService.register$(credentials, { signal: context.req.raw.signal }),
-      );
+      await firstValueFrom(authService.register$(credentials, { signal: context.req.raw.signal }));
       return context.redirect('/login?registered=1', 303);
     } catch (error) {
       if (error instanceof AuthEmailAlreadyRegisteredError) {

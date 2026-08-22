@@ -15,13 +15,7 @@ declare global {
 
 export const TODOS_SAMPLE_PORT = 3100;
 
-const clientBundlePath = join(
-  import.meta.dir,
-  '..',
-  'dist',
-  'client',
-  'todos-client.js',
-);
+const clientBundlePath = join(import.meta.dir, '..', 'dist', 'client', 'todos-client.js');
 
 const samplePage =
   '<!doctype html><html lang="en"><head><meta charset="utf-8">' +

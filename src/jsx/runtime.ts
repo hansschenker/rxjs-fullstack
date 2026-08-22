@@ -16,11 +16,7 @@ export interface FragmentNode {
 
 export type ViewNode = ElementNode | FragmentNode;
 
-export type ViewChild =
-  | PrimitiveView
-  | ViewNode
-  | Observable<unknown>
-  | readonly ViewChild[];
+export type ViewChild = PrimitiveView | ViewNode | Observable<unknown> | readonly ViewChild[];
 
 export type EventObservers = Partial<{
   [K in keyof GlobalEventHandlersEventMap]: Observer<GlobalEventHandlersEventMap[K]>;

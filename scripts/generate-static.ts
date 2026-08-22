@@ -4,10 +4,7 @@ import { dirname, join } from 'node:path';
 import { routes } from '../src/routes';
 import { app } from '../src/server/app';
 import type { ServerRouteContext } from '../src/server/route-context';
-import {
-  collectStaticPathnames,
-  renderStaticPage,
-} from '../src/ssg/static';
+import { collectStaticPathnames, renderStaticPage } from '../src/ssg/static';
 
 declare global {
   interface ImportMeta {

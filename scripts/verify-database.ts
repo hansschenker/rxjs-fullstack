@@ -7,24 +7,15 @@ import { createMemoryTodoRepository } from '../src/database/memory-todos-reposit
 import { createPgliteTodoRepository } from '../src/database/pglite-todos-repository';
 import { createApp } from '../src/server/app';
 
-const assert: (condition: unknown, message: string) => asserts condition = (
-  condition,
-  message,
-) => {
+const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
     throw new Error(message);
   }
 };
 
-const assertEqual = (
-  actual: unknown,
-  expected: unknown,
-  message: string,
-): void => {
+const assertEqual = (actual: unknown, expected: unknown, message: string): void => {
   if (!Object.is(actual, expected)) {
-    throw new Error(
-      `${message}\nExpected: ${String(expected)}\nActual: ${String(actual)}`,
-    );
+    throw new Error(`${message}\nExpected: ${String(expected)}\nActual: ${String(actual)}`);
   }
 };
 
@@ -51,7 +42,11 @@ const dataDir = join(tempRoot, 'postgres');
 try {
   const firstRepository = await createPgliteTodoRepository({ dataDir });
   const seededTodos = await firstValueFrom(firstRepository.list$());
-  assertEqual(seededTodos.length, 2, 'M11: a fresh database should receive the two canonical seed Todos.');
+  assertEqual(
+    seededTodos.length,
+    2,
+    'M11: a fresh database should receive the two canonical seed Todos.',
+  );
 
   const pendingCreate$ = firstRepository.create$({
     title: 'Persist M11 database integration',
@@ -80,7 +75,11 @@ try {
 
   const databaseApp = createApp({ todosRepository: reopenedRepository });
   const todosResponse = await databaseApp.request('/api/todos');
-  assertEqual(todosResponse.status, 200, 'M11: database-backed GET /api/todos should return HTTP 200.');
+  assertEqual(
+    todosResponse.status,
+    200,
+    'M11: database-backed GET /api/todos should return HTTP 200.',
+  );
   const todosJson = (await todosResponse.json()) as ReadonlyArray<{
     readonly title: string;
   }>;
@@ -94,7 +93,11 @@ try {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ title: 'Write through database-backed server action' }),
   });
-  assertEqual(createResponse.status, 201, 'M11: server actions should write through the database repository.');
+  assertEqual(
+    createResponse.status,
+    201,
+    'M11: server actions should write through the database repository.',
+  );
 
   const todosAfterActionResponse = await databaseApp.request('/api/todos');
   const todosAfterAction = (await todosAfterActionResponse.json()) as ReadonlyArray<{

@@ -22,31 +22,19 @@ declare const Bun: {
   sleep(milliseconds: number): Promise<void>;
 };
 
-const assert: (condition: unknown, message: string) => asserts condition = (
-  condition,
-  message,
-) => {
+const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
     throw new Error(message);
   }
 };
 
-const assertEqual = (
-  actual: unknown,
-  expected: unknown,
-  message: string,
-): void => {
+const assertEqual = (actual: unknown, expected: unknown, message: string): void => {
   if (!Object.is(actual, expected)) {
-    throw new Error(
-      `${message}\nExpected: ${String(expected)}\nActual: ${String(actual)}`,
-    );
+    throw new Error(`${message}\nExpected: ${String(expected)}\nActual: ${String(actual)}`);
   }
 };
 
-const requestRuntime = async (
-  handler: typeof fetchHandler,
-  pathname: string,
-): Promise<Response> =>
+const requestRuntime = async (handler: typeof fetchHandler, pathname: string): Promise<Response> =>
   handler(new Request(`http://rxjs-fullstack.runtime${pathname}`));
 
 const getSetCookie = (headers: Headers): readonly string[] => {
@@ -72,7 +60,11 @@ const workerHealth = await requestRuntime(cloudflareRuntime.fetch, '/health');
 
 assertEqual(directHealth.status, 200, 'M10: shared fetch handler should serve /health.');
 assertEqual(bunHealth.status, 200, 'M10: Bun adapter should expose the shared fetch handler.');
-assertEqual(workerHealth.status, 200, 'M10: Cloudflare adapter should expose the shared fetch handler.');
+assertEqual(
+  workerHealth.status,
+  200,
+  'M10: Cloudflare adapter should expose the shared fetch handler.',
+);
 assertEqual(
   await bunHealth.text(),
   await workerHealth.text(),
@@ -212,7 +204,11 @@ try {
     body: nodeCredentials,
     redirect: 'manual',
   });
-  assertEqual(nodeLogin.status, 303, 'M12: real Node runtime should authenticate the persisted user.');
+  assertEqual(
+    nodeLogin.status,
+    303,
+    'M12: real Node runtime should authenticate the persisted user.',
+  );
   assertEqual(
     nodeLogin.headers.get('location'),
     '/account/profile',
@@ -222,7 +218,10 @@ try {
   const authCookies = getSetCookie(nodeLogin.headers);
   const sessionCookie = authCookies.find((cookie) => cookie.startsWith('id='));
   const csrfCookie = authCookies.find((cookie) => cookie.startsWith('csrf='));
-  assert(sessionCookie && csrfCookie, 'M12: real Node login should issue both authentication cookies.');
+  assert(
+    sessionCookie && csrfCookie,
+    'M12: real Node login should issue both authentication cookies.',
+  );
   const authCookieHeader = `${cookiePair(sessionCookie)}; ${cookiePair(csrfCookie)}`;
 
   const nodeAccount = await fetch(`${nodeOrigin}/account/profile`, {
