@@ -1,5 +1,6 @@
 import { resolveRequest, type AnyRoute } from 'rxjs-router';
 
+import type { ResolvedAuthSession } from '../auth/types';
 import {
   QUERY_STATE_SCRIPT_ID,
   QueryClient,
@@ -35,17 +36,20 @@ export interface RenderRouteDocumentOptions {
   readonly routes: readonly AnyRoute[];
   readonly request: Request;
   readonly fetch: ServerRouteContext['fetch'];
+  readonly auth?: ResolvedAuthSession | null;
 }
 
 export const renderRouteDocument = async ({
   routes,
   request,
   fetch,
+  auth = null,
 }: RenderRouteDocumentOptions): Promise<RouteDocumentResult> => {
   const queryClient = new QueryClient();
   const routeContext: ServerRouteContext = {
     queryClient,
     fetch,
+    auth,
   };
 
   const result = await resolveRequest({
@@ -63,10 +67,7 @@ export const renderRouteDocument = async ({
   }
 
   if (result.type === 'notFound') {
-    return {
-      type: 'notFound',
-      statusCode: 404,
-    };
+    return { type: 'notFound', statusCode: 404 };
   }
 
   if (result.type === 'error') {

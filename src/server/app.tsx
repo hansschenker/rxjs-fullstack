@@ -1,27 +1,56 @@
 import { Hono } from 'hono';
 
+import { createPbkdf2PasswordHasher, type PasswordHasher } from '../auth/password';
+import { createAuthService } from '../auth/service';
+import type { AuthRepository } from '../database/auth-repository';
+import { createMemoryAuthRepository } from '../database/memory-auth-repository';
 import { createMemoryTodoRepository } from '../database/memory-todos-repository';
 import type { TodoRepository } from '../database/todos-repository';
 import { renderRouteDocument } from '../render/page';
 import { routes } from '../routes';
 import { createApi } from './api';
+import { createAuthHttp, resolveRequestAuth } from './auth';
 
 export interface CreateAppOptions {
   readonly todosRepository?: TodoRepository;
+  readonly authRepository?: AuthRepository;
+  readonly passwordHasher?: PasswordHasher;
 }
 
 export const createApp = ({
   todosRepository = createMemoryTodoRepository(),
+  authRepository = createMemoryAuthRepository(),
+  passwordHasher = createPbkdf2PasswordHasher(),
 }: CreateAppOptions = {}) => {
   const app = new Hono();
+  const authService = createAuthService({
+    repository: authRepository,
+    passwordHasher,
+  });
 
   app.get('/health', (context) => context.json({ ok: true }));
   app.route('/api', createApi({ todosRepository }));
+  app.route('/auth', createAuthHttp({ authService }));
+
+  app.use('/login', async (context, next) => {
+    await next();
+    context.header('cache-control', 'no-store');
+  });
+  app.use('/register', async (context, next) => {
+    await next();
+    context.header('cache-control', 'no-store');
+  });
+  app.use('/account/*', async (context, next) => {
+    await next();
+    context.header('cache-control', 'no-store');
+  });
 
   app.get('*', async (context) => {
+    const auth = await resolveRequestAuth(context, authService);
     const result = await renderRouteDocument({
       routes,
       request: context.req.raw,
+      auth,
       fetch: async (input, init) => {
         const url = new URL(input, context.req.raw.url);
         return app.request(`${url.pathname}${url.search}`, init);
