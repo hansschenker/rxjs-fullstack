@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { stream } from 'hono/streaming';
 
 import { createPbkdf2PasswordHasher, type PasswordHasher } from '../auth/password';
 import { createAuthService } from '../auth/service';
@@ -7,6 +8,7 @@ import { createMemoryAuthRepository } from '../database/memory-auth-repository';
 import { createMemoryTodoRepository } from '../database/memory-todos-repository';
 import type { TodoRepository } from '../database/todos-repository';
 import { renderRouteResponse } from '../render/page';
+import { writeDocumentStream } from '../render/stream';
 import { routes } from '../routes';
 import { createApi } from './api';
 import { createAuthHttp, resolveRequestAuth } from './auth';
@@ -73,13 +75,18 @@ export const createApp = ({
     }
 
     if (result.type === 'stream') {
-      return new Response(result.body, {
-        status: 200,
-        headers: {
-          'cache-control': 'no-store',
-          'content-encoding': 'Identity',
-          'content-type': 'text/html; charset=UTF-8',
-        },
+      context.header('cache-control', 'no-store');
+      context.header('content-encoding', 'Identity');
+      context.header('content-type', 'text/html; charset=UTF-8');
+
+      return stream(context, async (streamingApi) => {
+        await writeDocumentStream({
+          sink: streamingApi,
+          title: result.title,
+          initialBody: result.initialBody,
+          body$: result.body$,
+          jsonScripts: result.jsonScripts,
+        });
       });
     }
 
