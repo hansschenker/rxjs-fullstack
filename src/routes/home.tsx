@@ -16,7 +16,7 @@ export const homeRoute = createChildRoute<typeof rootBaseRoute>()({
       view: (
         <HomePage
           title={title}
-          milestone="M01-M10 vertical slice with runtime adapters"
+          milestone="M01-M11 vertical slice with database integration"
         />
       ),
     };

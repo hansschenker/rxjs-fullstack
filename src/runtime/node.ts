@@ -1,3 +1,8 @@
+import {
+  DEFAULT_DATABASE_PATH,
+  createPgliteTodoRepository,
+} from '../database/pglite-todos-repository';
+import { createApp } from '../server/app';
 import { createNodeServer, DEFAULT_NODE_PORT } from './node-adapter';
 
 const parsePort = (value: string | undefined): number => {
@@ -12,12 +17,21 @@ const parsePort = (value: string | undefined): number => {
 };
 
 export const nodePort = parsePort(process.env.PORT);
-export const nodeServer = createNodeServer({ port: nodePort });
+export const todosRepository = await createPgliteTodoRepository({
+  dataDir: process.env.DATABASE_PATH ?? DEFAULT_DATABASE_PATH,
+});
+const databaseApp = createApp({ todosRepository });
+export const nodeServer = createNodeServer({
+  port: nodePort,
+  fetch: databaseApp.fetch,
+});
 
 console.log(`RxJS Fullstack listening on http://localhost:${nodePort} (Node.js)`);
 
 const shutdown = (): void => {
-  nodeServer.close();
+  nodeServer.close(() => {
+    void todosRepository.close();
+  });
 };
 
 process.once('SIGINT', shutdown);

@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import bunRuntime from '../src/runtime/bun';
 import cloudflareRuntime from '../src/runtime/cloudflare';
 import { fetchHandler } from '../src/runtime/fetch';
@@ -73,30 +77,32 @@ assertEqual(
 );
 
 const nodePort = 31_027;
+const nodeDatabaseRoot = await mkdtemp(join(tmpdir(), 'rxjs-fullstack-node-m11-'));
 const nodeProcess = Bun.spawn(['node', 'dist/runtime/node.js'], {
   env: {
     ...Bun.env,
     PORT: String(nodePort),
+    DATABASE_PATH: join(nodeDatabaseRoot, 'postgres'),
   },
   stdout: 'inherit',
   stderr: 'inherit',
 });
 
 const waitForNode = async (): Promise<Response> => {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
       const response = await fetch(`http://127.0.0.1:${nodePort}/health`);
       if (response.ok) {
         return response;
       }
     } catch {
-      // The Node process may still be binding the port.
+      // PGlite initialization and Node port binding may still be in progress.
     }
 
     await Bun.sleep(50);
   }
 
-  throw new Error('M10: Node runtime did not become ready.');
+  throw new Error('M10-M11: Node runtime did not become ready.');
 };
 
 try {
@@ -116,9 +122,19 @@ try {
     await expectedAbout.text(),
     'M10: Node adapter must not change the route/data/SSR result.',
   );
+
+  const nodeTodos = await fetch(`http://127.0.0.1:${nodePort}/api/todos`);
+  const nodeTodosJson = (await nodeTodos.json()) as ReadonlyArray<{
+    readonly title: string;
+  }>;
+  assert(
+    nodeTodosJson.some((todo) => todo.title === 'Port TanStack Query to RxJS'),
+    'M11: actual Node runtime should expose the seeded database-backed Todo repository.',
+  );
 } finally {
   nodeProcess.kill(15);
   await nodeProcess.exited;
+  await rm(nodeDatabaseRoot, { recursive: true, force: true });
 }
 
-console.log('M10 runtime adapter verification passed.');
+console.log('M10-M11 runtime adapter verification passed.');
