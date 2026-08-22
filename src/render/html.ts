@@ -1,4 +1,4 @@
-import { isObservable } from 'rxjs';
+import { isObservable, type Observable, type Subscription } from 'rxjs';
 
 import {
   isViewNode,
@@ -121,11 +121,74 @@ const serializeJsonForHtml = (value: unknown): string => {
 const renderJsonScript = ({ id, value }: HtmlJsonScript): string =>
   `<script id="${escapeHtml(id)}" type="application/json">${serializeJsonForHtml(value)}</script>`;
 
+export const renderDocumentPrefix = ({
+  title,
+  body,
+}: Pick<HtmlDocumentOptions, 'title' | 'body'>): string =>
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head><body>${body}`;
+
+export const renderDocumentSuffix = ({
+  jsonScripts = [],
+}: Pick<HtmlDocumentOptions, 'jsonScripts'> = {}): string => {
+  const scripts = jsonScripts.map(renderJsonScript).join('');
+  return `${scripts}</body></html>`;
+};
+
 export const renderDocument = ({
   title,
   body,
   jsonScripts = [],
-}: HtmlDocumentOptions): string => {
-  const scripts = jsonScripts.map(renderJsonScript).join('');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head><body>${body}${scripts}</body></html>`;
+}: HtmlDocumentOptions): string =>
+  `${renderDocumentPrefix({ title, body })}${renderDocumentSuffix({ jsonScripts })}`;
+
+export interface HtmlDocumentStreamOptions {
+  readonly title: string;
+  readonly initialBody: string;
+  readonly body$: Observable<string>;
+  readonly jsonScripts?: () => readonly HtmlJsonScript[];
+  readonly errorBody?: string;
+}
+
+const DEFAULT_STREAM_ERROR_BODY =
+  '<section data-rxjs-stream-error="true"><p>Streaming content failed.</p></section>';
+
+export const renderDocumentStream = ({
+  title,
+  initialBody,
+  body$,
+  jsonScripts = () => [],
+  errorBody = DEFAULT_STREAM_ERROR_BODY,
+}: HtmlDocumentStreamOptions): ReadableStream<Uint8Array> => {
+  const encoder = new TextEncoder();
+  let subscription: Subscription | undefined;
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      const write = (value: string): void => {
+        controller.enqueue(encoder.encode(value));
+      };
+
+      const finish = (): void => {
+        try {
+          write(renderDocumentSuffix({ jsonScripts: jsonScripts() }));
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      };
+
+      write(renderDocumentPrefix({ title, body: initialBody }));
+      subscription = body$.subscribe({
+        next: write,
+        error: () => {
+          write(errorBody);
+          finish();
+        },
+        complete: finish,
+      });
+    },
+    cancel() {
+      subscription?.unsubscribe();
+    },
+  });
 };

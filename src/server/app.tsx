@@ -6,7 +6,7 @@ import type { AuthRepository } from '../database/auth-repository';
 import { createMemoryAuthRepository } from '../database/memory-auth-repository';
 import { createMemoryTodoRepository } from '../database/memory-todos-repository';
 import type { TodoRepository } from '../database/todos-repository';
-import { renderRouteDocument } from '../render/page';
+import { renderRouteResponse } from '../render/page';
 import { routes } from '../routes';
 import { createApi } from './api';
 import { createAuthHttp, resolveRequestAuth } from './auth';
@@ -47,7 +47,7 @@ export const createApp = ({
 
   app.get('*', async (context) => {
     const auth = await resolveRequestAuth(context, authService);
-    const result = await renderRouteDocument({
+    const result = await renderRouteResponse({
       routes,
       request: context.req.raw,
       auth,
@@ -70,6 +70,17 @@ export const createApp = ({
 
     if (result.type === 'error') {
       return context.text('Internal Server Error', 500);
+    }
+
+    if (result.type === 'stream') {
+      return new Response(result.body, {
+        status: 200,
+        headers: {
+          'cache-control': 'no-store',
+          'content-encoding': 'Identity',
+          'content-type': 'text/html; charset=UTF-8',
+        },
+      });
     }
 
     return context.html(result.html);
