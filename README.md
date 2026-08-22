@@ -4299,6 +4299,14 @@ Use `DATABASE_PATH` to select another filesystem location:
 DATABASE_PATH=./data/dev-postgres bun run dev:bun
 ```
 
+### Browser Todos sample
+
+```sh
+bun run dev:todos
+```
+
+This builds `dist/client/todos-client.js` and serves it on `http://localhost:3100` from a minimal mount page, with the same Hono application handling `/api` and `/api/actions` on that origin. The sample mounts `TodoApp` with the M02 DOM renderer and drives its data through the M05 Query/Cache layer and the M07 create-todo server action.
+
 ### Node.js runtime
 
 ```sh

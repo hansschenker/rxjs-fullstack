@@ -18,6 +18,7 @@ import {
   renderStaticPage,
   staticOutputPath,
 } from '../src/ssg/static';
+import { createTodosSampleApp } from './serve-todos';
 
 const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
@@ -438,6 +439,25 @@ assertEqual(
   legacyMutationResponse.status,
   404,
   'M07: Todo creation should no longer use the ad-hoc POST /api/todos endpoint.',
+);
+
+const todosSampleApp = createTodosSampleApp();
+const todosSamplePage = await todosSampleApp.request('/');
+assertEqual(todosSamplePage.status, 200, 'Todos sample: the harness page should return HTTP 200.');
+const todosSampleHtml = await todosSamplePage.text();
+assert(
+  todosSampleHtml.includes('<div id="app">'),
+  'Todos sample: the harness page should provide the #app mount element.',
+);
+assert(
+  todosSampleHtml.includes('src="/client/todos-client.js"'),
+  'Todos sample: the harness page should load the built browser bundle.',
+);
+const todosSampleApi = await todosSampleApp.request('/api/todos');
+assertEqual(
+  todosSampleApi.status,
+  200,
+  'Todos sample: the harness should expose the todos API on the same origin.',
 );
 
 console.log('M01-M13 verification passed.');
