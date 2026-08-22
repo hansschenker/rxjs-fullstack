@@ -19,11 +19,7 @@ import { createInfiniteQueryStream } from "./infiniteQueryStream";
 import { createQueriesStream } from "./queriesStream";
 import { MutationStream } from "./mutationStream";
 import type { InfiniteQueryResult } from "./infiniteQueryStream";
-import type {
-  CombineFn,
-  QueriesResults,
-  QueriesStreamOptions,
-} from "./queriesStream";
+import type { QueriesResults, QueriesStreamOptions } from "./queriesStream";
 import type {
   MutationFilters,
   QueryFilters,
