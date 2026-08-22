@@ -34,6 +34,12 @@ const fromBase64Url = (value: string): Uint8Array => {
 const randomBytes = (length: number): Uint8Array =>
   crypto.getRandomValues(new Uint8Array(length));
 
+const toArrayBuffer = (value: Uint8Array): ArrayBuffer => {
+  const copy = new Uint8Array(value.length);
+  copy.set(value);
+  return copy.buffer;
+};
+
 const derivePassword = async (
   password: string,
   salt: Uint8Array,
@@ -50,7 +56,7 @@ const derivePassword = async (
     {
       name: 'PBKDF2',
       hash: 'SHA-256',
-      salt,
+      salt: toArrayBuffer(salt),
       iterations,
     },
     keyMaterial,
