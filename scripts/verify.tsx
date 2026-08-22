@@ -1,10 +1,11 @@
 import { defer, firstValueFrom, map, of } from 'rxjs';
 
 import { helloRoute } from '../src/examples/routes';
-import { app } from '../src/server/app';
 import { Fragment, jsx } from '../src/jsx/runtime';
+import { generatedRouteFiles } from '../src/routes.generated';
 import { renderToString } from '../src/render/html';
 import type { RouteParams } from '../src/router/route';
+import { app } from '../src/server/app';
 
 const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
@@ -49,15 +50,30 @@ assert(
 );
 
 const response = await app.request('/');
-assertEqual(response.status, 200, 'M04/M05: root route should return HTTP 200.');
+assertEqual(response.status, 200, 'M04-M06: root route should return HTTP 200.');
 const body = await response.text();
 assert(body.includes('<h1>RxJS Fullstack</h1>'), 'M04: root route should return SSR HTML.');
-assert(body.includes('M01-M05 vertical slice with rxjs-router'), 'M04: SSR route should render route data.');
+assert(
+  body.includes('M01-M06 vertical slice with file-based route discovery'),
+  'M06: SSR route should render generated route-tree data.',
+);
 
 const counterResponse = await app.request('/counter');
-assertEqual(counterResponse.status, 200, 'M05: counter route should return HTTP 200.');
+assertEqual(counterResponse.status, 200, 'M05/M06: counter route should return HTTP 200.');
 const counterBody = await counterResponse.text();
 assert(counterBody.includes('<h1>RxJS Fullstack Counter</h1>'), 'M05: router should render nested counter route.');
+
+const aboutResponse = await app.request('/about');
+assertEqual(aboutResponse.status, 200, 'M06: generated about route should return HTTP 200.');
+const aboutBody = await aboutResponse.text();
+assert(
+  aboutBody.includes('<h1>About RxJS Fullstack</h1>'),
+  'M06: a discovered route module should participate in SSR without manual route registration.',
+);
+assert(
+  generatedRouteFiles.includes('about.tsx'),
+  'M06: generated route manifest should contain newly discovered page modules.',
+);
 
 const health = await app.request('/health');
 assertEqual(health.status, 200, 'M04: health route should return HTTP 200.');
@@ -97,7 +113,7 @@ try {
 assert(hrefWrongParamRejected, 'M05: href should throw for unrelated parameter names.');
 
 const todosResponse = await app.request('/todos');
-assertEqual(todosResponse.status, 200, 'M05: todos route should return HTTP 200.');
+assertEqual(todosResponse.status, 200, 'M05/M06: todos route should return HTTP 200.');
 const todosBody = await todosResponse.text();
 assert(todosBody.includes('<h1>RxJS Fullstack Todos</h1>'), 'M05: todos route should render SSR HTML.');
 
@@ -106,4 +122,4 @@ assertEqual(todosApi.status, 200, 'M05: todos API should return HTTP 200.');
 const todosJson = (await todosApi.json()) as ReadonlyArray<{ readonly id: number }>;
 assert(Array.isArray(todosJson) && todosJson.length > 0, 'M05: todos API should return seeded todos.');
 
-console.log('M01-M05 verification passed.');
+console.log('M01-M06 verification passed.');

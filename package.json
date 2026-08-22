@@ -5,13 +5,14 @@
   "type": "module",
   "packageManager": "bun@1.4.0",
   "scripts": {
-    "dev": "bun run --hot src/server/bun.ts",
-    "start": "bun run src/server/bun.ts",
-    "typecheck": "tsc --noEmit",
-    "verify": "bun run scripts/verify.tsx",
+    "generate:routes": "bun run scripts/generate-routes.ts",
+    "dev": "bun run generate:routes && bun run --hot src/server/bun.ts",
+    "start": "bun run generate:routes && bun run src/server/bun.ts",
+    "typecheck": "bun run generate:routes && tsc --noEmit",
+    "verify": "bun run generate:routes && bun run scripts/verify.tsx",
     "build:client": "bun build src/examples/counter-client.tsx --outdir dist/client --target browser",
     "build:todos": "bun build src/examples/todos-client.tsx --outdir dist/client --target browser",
-    "check": "bun run typecheck && bun run verify && bun run build:client && bun run build:todos"
+    "check": "bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run build:client && bun run build:todos"
   },
   "dependencies": {
     "hono": "4.13.3",

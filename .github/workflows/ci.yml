@@ -16,6 +16,11 @@ jobs:
         with:
           bun-version: 1.4.0
 
+      - name: Checkout rxjs-router sibling
+        run: |
+          git clone --depth 1 https://github.com/hansschenker/rxjs-router ../rxjs-router
+          (cd ../rxjs-router && bun install --production)
+
       - name: Install dependencies
         run: bun install
 
