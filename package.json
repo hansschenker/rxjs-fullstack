@@ -22,10 +22,9 @@
     "build:node": "bun build src/runtime/node.ts --outfile dist/runtime/node.js --target node --external @electric-sql/pglite",
     "build:worker": "bun build src/runtime/cloudflare.ts --outfile dist/runtime/cloudflare.js --target browser",
     "verify:runtimes": "bun run scripts/verify-runtimes.ts",
-    "build:client": "bun build src/examples/counter-client.tsx --outdir dist/client --target browser",
     "build:todos": "bun build src/examples/todos-client.tsx --outdir dist/client --target browser",
     "dev:todos": "bun run build:todos && bun run scripts/serve-todos.ts",
-    "check": "bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run scripts/verify-dom.tsx && bun run verify:database && bun run verify:auth && bun run verify:streaming && bun run scripts/generate-static.ts && bun run scripts/verify-static.ts && bun run build:node && bun run build:worker && bun run verify:runtimes && bun run build:client && bun run build:todos"
+    "check": "bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run scripts/verify-dom.tsx && bun run verify:database && bun run verify:auth && bun run verify:streaming && bun run scripts/generate-static.ts && bun run scripts/verify-static.ts && bun run build:node && bun run build:worker && bun run verify:runtimes && bun run build:todos"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.5",
