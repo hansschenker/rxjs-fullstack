@@ -4,6 +4,7 @@ import {
   filter,
   fromEvent,
   map,
+  of,
   take,
   takeUntil,
   timer,
@@ -23,9 +24,11 @@ const isServerRouteContext = (value: unknown): value is ServerRouteContext =>
   'queryClient' in value &&
   'fetch' in value;
 
+const aborted$ = (signal: AbortSignal) =>
+  signal.aborted ? of(signal.reason) : fromEvent(signal, 'abort');
+
 const streamedTodos$ = (
   context: ServerRouteContext,
-  signal: AbortSignal,
 ) =>
   timer(15).pipe(
     concatMap(() =>
@@ -40,7 +43,6 @@ const streamedTodos$ = (
         }),
       ),
     ),
-    takeUntil(fromEvent(signal, 'abort')),
     map((todos) => (
       <section id="streaming-todos">
         <h2>Query/Cache result</h2>
@@ -81,8 +83,8 @@ export const streamingRoute = createChildRoute<typeof rootBaseRoute>()({
           </section>
         )),
       ),
-      streamedTodos$(serverContext, signal),
-    ).pipe(takeUntil(fromEvent(signal, 'abort')));
+      streamedTodos$(serverContext),
+    ).pipe(takeUntil(aborted$(signal)));
 
     return {
       title: `${parentData.appName} Streaming SSR`,
