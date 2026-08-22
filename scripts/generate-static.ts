@@ -1,3 +1,6 @@
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+
 import { routes } from '../src/routes';
 import { app } from '../src/server/app';
 import type { ServerRouteContext } from '../src/server/route-context';
@@ -12,23 +15,15 @@ declare global {
   }
 }
 
-declare const Bun: {
-  readonly $: (
-    strings: TemplateStringsArray,
-    ...expressions: unknown[]
-  ) => Promise<unknown>;
-  write(path: string, data: string): Promise<number>;
-};
-
-const projectRoot = `${import.meta.dir}/..`;
-const outputRoot = `${projectRoot}/dist/static`;
+const projectRoot = join(import.meta.dir, '..');
+const outputRoot = join(projectRoot, 'dist', 'static');
 
 const fetchFromApp: ServerRouteContext['fetch'] = async (input, init) => {
   const url = new URL(input, 'http://rxjs-fullstack.static');
   return app.request(`${url.pathname}${url.search}`, init);
 };
 
-await Bun.$`rm -rf ${outputRoot}`;
+await rm(outputRoot, { recursive: true, force: true });
 
 const pathnames = collectStaticPathnames(routes);
 
@@ -38,11 +33,10 @@ for (const pathname of pathnames) {
     pathname,
     fetch: fetchFromApp,
   });
-  const outputFile = `${projectRoot}/${page.outputPath}`;
-  const outputDirectory = outputFile.slice(0, outputFile.lastIndexOf('/'));
+  const outputFile = join(projectRoot, page.outputPath);
 
-  await Bun.$`mkdir -p ${outputDirectory}`;
-  await Bun.write(outputFile, page.html);
+  await mkdir(dirname(outputFile), { recursive: true });
+  await writeFile(outputFile, page.html);
   console.log(`${pathname} -> ${page.outputPath}`);
 }
 
