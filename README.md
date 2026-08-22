@@ -44,7 +44,7 @@ M01 establishes a framework-owned view representation without React.
 
 TypeScript compiles TSX through the automatic JSX runtime (`jsx: "react-jsx"` with `jsxImportSource` pointing at the framework's own `src/jsx/jsx-runtime.ts` — the setting's name is historical; React is not involved). The compiler injects the runtime import itself, so view modules never import a JSX factory manually, and fragments (`<>...</>`) type-check. JSX therefore produces `ViewChild` values rather than DOM nodes or React elements.
 
-The runtime supports primitives, intrinsic elements, fragments, function components, nested children, and RxJS Observables as live view values. It does not render, subscribe, create DOM, or own lifecycle.
+The intrinsic JSX surface is deliberately typed: standard HTML tag names are accepted, common attributes are explicit, and `data-*` / `aria-*` remain extensibility points, so misspelled tags or unsupported attributes fail typechecking. The runtime supports primitives, intrinsic elements, fragments, function components, nested children, and RxJS Observables as live view values. It does not render, subscribe, create DOM, or own lifecycle.
 
 The implementation lives in `src/jsx/runtime.ts`.
 

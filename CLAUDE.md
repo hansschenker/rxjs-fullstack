@@ -24,7 +24,9 @@ M07 shared action references and the browser action transport live in `src/actio
 
 ## Commands
 
-- `bun run check` — generate routes + typecheck + verify + build both example clients. **This must pass before any change counts as done.**
+- `bun run check` — format check + generate routes + typecheck + verify + runtime/client builds. **This must pass before any change counts as done.**
+- `bun run format` — format framework/application TypeScript and JSON with the repository Prettier policy.
+- `bun run format:check` — verify the owned source tree is already formatted.
 - `bun run generate:routes` — regenerate the deterministic page-route tree.
 - `bun run verify` — regenerate routes and run `scripts/verify.tsx`, the executable spec.
 - `bun run typecheck` — regenerate routes and run `tsc --noEmit`.
@@ -52,7 +54,7 @@ The sibling production install is required because browser bundling follows `rxj
 ## Architecture invariants
 
 - **The HTML renderer never subscribes.** `renderToString()` is pure; Observable children/attributes reaching it are a `TypeError`. Server async work resolves before rendering.
-- **The JSX runtime creates no DOM and owns no lifecycle.** It only creates/normalizes `ViewChild` descriptions.
+- **The JSX runtime creates no DOM and owns no lifecycle.** It only creates/normalizes `ViewChild` descriptions. Standard HTML intrinsic tags and the supported attribute surface are type-checked; `data-*` and `aria-*` remain explicit extensibility points.
 - **Cancellation has one owner.** `mount(view, container)` returns the RxJS `Subscription` for the mounted view. Unsubscribing tears down listeners, child subscriptions, live regions, and DOM.
 - **Events flow through Observers; meaning flows through RxJS pipelines.** Renderers forward events and do not interpret them.
 - **Live form state binds to properties.** `value`/`checked`/`selected` are assigned as DOM properties — their attributes only set defaults and stop reflecting after user interaction. Everything else binds as an attribute; the SSR renderer keeps emitting attributes (that is how HTML expresses initial state).
@@ -91,7 +93,7 @@ Do not reduce completed milestone sections to terse changelog entries. The READM
 
 ## Working style
 
-- TypeScript strict; no new `any`; 2-space indent in application/framework files.
+- TypeScript strict; no new `any`; `noUnusedLocals` and `noUnusedParameters` stay enabled. Prettier owns application/framework formatting; vendored `src/query/` internals and generated routes keep their source style.
 - Every new capability needs a corresponding invariant/check in `scripts/verify.tsx`.
 - Keep the README milestone narrative synchronized with behavior and maintain the project-page documentation standard above.
 - When triggered from an issue (`@claude` mention): work on a branch, open a PR, report `bun run check` results in the PR body, and do not merge.
