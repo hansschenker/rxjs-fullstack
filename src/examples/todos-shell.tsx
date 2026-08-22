@@ -2,7 +2,7 @@ import { Subject, concatMap, filter, from, map, tap } from 'rxjs';
 import type { Observable } from 'rxjs';
 import { createBrowserHistory, createRouter, type RxRouter } from 'rxjs-router';
 
-import { Fragment, jsx, type ViewChild } from '../jsx/runtime';
+import type { ViewChild } from '../jsx/runtime';
 import { routes, type AppRoutes, type PageData } from '../routes';
 
 export interface TodosShell {

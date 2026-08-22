@@ -1,7 +1,6 @@
 import { defer, filter, firstValueFrom, map, of } from 'rxjs';
 import { buildPath, createRoute, type PathParams } from 'rxjs-router';
 
-import { Fragment, jsx } from '../src/jsx/runtime';
 import {
   QUERY_STATE_SCRIPT_ID,
   QueryClient,

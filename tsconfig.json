@@ -10,9 +10,12 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "react",
-    "jsxFactory": "jsx",
-    "jsxFragmentFactory": "Fragment",
+    "jsx": "react-jsx",
+    "jsxImportSource": "rxjs-fullstack",
+    "paths": {
+      "rxjs-fullstack/jsx-runtime": ["./src/jsx/jsx-runtime.ts"],
+      "rxjs-fullstack/jsx-dev-runtime": ["./src/jsx/jsx-dev-runtime.ts"]
+    },
     "noEmit": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts", "scripts/**/*.tsx"]

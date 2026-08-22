@@ -2,7 +2,7 @@ import { GlobalRegistrator } from '@happy-dom/global-registrator';
 import { Observable, Subject, filter, firstValueFrom } from 'rxjs';
 
 import { Counter } from '../src/examples/counter';
-import { Fragment, jsx, type ViewChild } from '../src/jsx/runtime';
+import type { ViewChild } from '../src/jsx/runtime';
 import { mount } from '../src/render/dom';
 
 GlobalRegistrator.register({ url: 'http://localhost:3100/' });
@@ -22,17 +22,15 @@ const assertEqual = (actual: unknown, expected: unknown, message: string): void 
 };
 
 // M02: static rendering — fragments, arrays, elements, attributes, teardown.
-// (Fragment syntax <>...</> does not typecheck against the symbol factory, so
-// the fragment path is exercised through the jsx() factory directly.)
+// (Real <>...</> syntax: the automatic JSX runtime type-checks fragments,
+// which the classic transform could not do against the symbol factory.)
 const staticContainer = document.createElement('div');
 const staticLifetime = mount(
-  jsx(
-    Fragment,
-    null,
+  <>
     <section className="panel">
       {['alpha', 'beta'].map((item): ViewChild => <span>{item}</span>)}
-    </section>,
-  ),
+    </section>
+  </>,
   staticContainer,
 );
 assertEqual(

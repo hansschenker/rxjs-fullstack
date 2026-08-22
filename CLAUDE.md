@@ -67,7 +67,7 @@ The sibling production install is required because browser bundling follows `rxj
 - **`rxjs-router` owns routing semantics.** File discovery only locates/assembles route modules.
 - **Page-route discovery is deterministic and strongly typed.** The generator sorts filenames and emits the complete root `createRoute({ children: [...] })` tree to preserve const-tuple inference.
 - **Hono owns HTTP; Bun is only the runtime/build adapter.**
-- **No React.** Do not add React/ReactDOM or React lifecycle/state idioms.
+- **No React.** Do not add React/ReactDOM or React lifecycle/state idioms. The `jsx: "react-jsx"` tsconfig setting is only the automatic-transform name — `jsxImportSource` resolves to the framework's own `src/jsx/jsx-runtime.ts`.
 
 ## README / project-page documentation standard
 

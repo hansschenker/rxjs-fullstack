@@ -12,7 +12,6 @@ import {
 import { createChildRoute } from 'rxjs-router';
 
 import { TodoSnapshot } from '../examples/todos';
-import { Fragment, jsx } from '../jsx/runtime';
 import { createTodosQuery, type Todo } from '../queries/todos';
 import type { ServerRouteContext } from '../server/route-context';
 import { rootBaseRoute } from './root';

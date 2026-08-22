@@ -1,6 +1,5 @@
 import { map, scan, shareReplay, startWith, Subject } from 'rxjs';
 
-import { Fragment, jsx } from '../jsx/runtime';
 
 export const Counter = () => {
   const increment$ = new Subject<MouseEvent>();

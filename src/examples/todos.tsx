@@ -11,7 +11,7 @@ import {
 import { QueryClient } from '../query';
 
 import { createTodoInput, type CreateTodoInput } from '../domain/todos';
-import { Fragment, jsx, type ViewChild } from '../jsx/runtime';
+import type { ViewChild } from '../jsx/runtime';
 import { createTodo$, todosQuery, type Todo } from '../queries/todos';
 
 export const queryClient = new QueryClient();

@@ -1,7 +1,6 @@
 import { createChildRoute } from 'rxjs-router';
 
 import { LoginPage } from '../examples/auth';
-import { Fragment, jsx } from '../jsx/runtime';
 import { rootBaseRoute } from './root';
 import type { PageData } from './types';
 

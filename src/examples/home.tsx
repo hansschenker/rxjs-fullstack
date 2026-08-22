@@ -1,4 +1,3 @@
-import { Fragment, jsx } from '../jsx/runtime';
 
 export interface HomeModel {
   readonly title: string;

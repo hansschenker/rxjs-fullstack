@@ -1,5 +1,5 @@
 import type { AuthUser } from '../auth/types';
-import { Fragment, jsx, type ViewChild } from '../jsx/runtime';
+import type { ViewChild } from '../jsx/runtime';
 
 const AuthNav = (): ViewChild => (
   <nav>
