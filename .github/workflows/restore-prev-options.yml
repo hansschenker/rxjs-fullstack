@@ -1,0 +1,40 @@
+name: Restore required query option snapshot
+
+on:
+  push:
+    branches:
+      - feat/external-review-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7
+        with:
+          ref: feat/external-review-hardening
+
+      - name: Restore required setOptions snapshot
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/query/queryStream.ts')
+          text = path.read_text()
+          marker = '''  ): void {\n    const prevQuery = this.#currentQuery;\n\n    this.options = this.#client.defaultQueryOptions(options);'''
+          replacement = '''  ): void {\n    const prevQuery = this.#currentQuery;\n    const prevOptions = this.options;\n\n    this.options = this.#client.defaultQueryOptions(options);'''
+          if marker not in text:
+              raise SystemExit('setOptions marker not found')
+          path.write_text(text.replace(marker, replacement, 1))
+          PY
+
+      - name: Commit correction
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "codex@openai.com"
+          git add src/query/queryStream.ts
+          git commit -m "feat: preserve previous query options during updates" -m "Co-authored-by: OpenAI Codex <codex@openai.com>"
+          git push origin HEAD:feat/external-review-hardening
