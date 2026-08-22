@@ -89,7 +89,7 @@ assertEqual(
 
 const nodePort = 31_027;
 const nodeOrigin = `http://127.0.0.1:${nodePort}`;
-const nodeDatabaseRoot = await mkdtemp(join(tmpdir(), 'rxjs-fullstack-node-m12-'));
+const nodeDatabaseRoot = await mkdtemp(join(tmpdir(), 'rxjs-fullstack-node-m13-'));
 const nodeProcess = Bun.spawn(['node', 'dist/runtime/node.js'], {
   env: {
     ...Bun.env,
@@ -114,7 +114,7 @@ const waitForNode = async (): Promise<Response> => {
     await Bun.sleep(50);
   }
 
-  throw new Error('M10-M12: Node runtime did not become ready.');
+  throw new Error('M10-M13: Node runtime did not become ready.');
 };
 
 try {
@@ -142,6 +142,47 @@ try {
   assert(
     nodeTodosJson.some((todo) => todo.title === 'Port TanStack Query to RxJS'),
     'M11: actual Node runtime should expose the seeded database-backed Todo repository.',
+  );
+
+  const nodeStreaming = await fetch(`${nodeOrigin}/streaming`);
+  assertEqual(nodeStreaming.status, 200, 'M13: actual Node runtime should serve streaming SSR.');
+  assert(
+    nodeStreaming.body,
+    'M13: actual Node streaming response should expose a ReadableStream body.',
+  );
+  const streamingReader = nodeStreaming.body.getReader();
+  const streamingDecoder = new TextDecoder();
+  const firstStreamingRead = await streamingReader.read();
+  assert(
+    !firstStreamingRead.done && firstStreamingRead.value,
+    'M13: actual Node runtime should deliver an initial streaming chunk.',
+  );
+  const firstStreamingHtml = streamingDecoder.decode(firstStreamingRead.value, {
+    stream: true,
+  });
+  assert(
+    firstStreamingHtml.includes('id="streaming-shell"'),
+    'M13: actual Node first chunk should contain the streaming shell.',
+  );
+  assert(
+    !firstStreamingHtml.includes('id="streaming-todos"'),
+    'M13: actual Node first chunk should arrive before query-backed streamed content.',
+  );
+
+  let completeStreamingHtml = firstStreamingHtml;
+  for (;;) {
+    const next = await streamingReader.read();
+    if (next.done) {
+      completeStreamingHtml += streamingDecoder.decode();
+      break;
+    }
+    completeStreamingHtml += streamingDecoder.decode(next.value, { stream: true });
+  }
+  assert(
+    completeStreamingHtml.includes('id="streaming-progress"') &&
+      completeStreamingHtml.includes('id="streaming-todos"') &&
+      completeStreamingHtml.includes('"queryKey":["todos"]'),
+    'M13: actual Node runtime should deliver all RxJS chunks and final Query/Cache state.',
   );
 
   const nodeCredentials = new URLSearchParams({
@@ -196,4 +237,4 @@ try {
   await rm(nodeDatabaseRoot, { recursive: true, force: true });
 }
 
-console.log('M10-M12 runtime adapter verification passed.');
+console.log('M10-M13 runtime adapter verification passed.');
