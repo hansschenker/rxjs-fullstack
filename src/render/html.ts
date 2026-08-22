@@ -1,4 +1,4 @@
-import { isObservable, type Observable, type Subscription } from 'rxjs';
+import { isObservable } from 'rxjs';
 
 import {
   isViewNode,
@@ -140,55 +140,3 @@ export const renderDocument = ({
   jsonScripts = [],
 }: HtmlDocumentOptions): string =>
   `${renderDocumentPrefix({ title, body })}${renderDocumentSuffix({ jsonScripts })}`;
-
-export interface HtmlDocumentStreamOptions {
-  readonly title: string;
-  readonly initialBody: string;
-  readonly body$: Observable<string>;
-  readonly jsonScripts?: () => readonly HtmlJsonScript[];
-  readonly errorBody?: string;
-}
-
-const DEFAULT_STREAM_ERROR_BODY =
-  '<section data-rxjs-stream-error="true"><p>Streaming content failed.</p></section>';
-
-export const renderDocumentStream = ({
-  title,
-  initialBody,
-  body$,
-  jsonScripts = () => [],
-  errorBody = DEFAULT_STREAM_ERROR_BODY,
-}: HtmlDocumentStreamOptions): ReadableStream<Uint8Array> => {
-  const encoder = new TextEncoder();
-  let subscription: Subscription | undefined;
-
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      const write = (value: string): void => {
-        controller.enqueue(encoder.encode(value));
-      };
-
-      const finish = (): void => {
-        try {
-          write(renderDocumentSuffix({ jsonScripts: jsonScripts() }));
-          controller.close();
-        } catch (error) {
-          controller.error(error);
-        }
-      };
-
-      write(renderDocumentPrefix({ title, body: initialBody }));
-      subscription = body$.subscribe({
-        next: write,
-        error: () => {
-          write(errorBody);
-          finish();
-        },
-        complete: finish,
-      });
-    },
-    cancel() {
-      subscription?.unsubscribe();
-    },
-  });
-};
