@@ -67,6 +67,11 @@ export type {
   DehydratedState,
   HydrateOptions,
 } from "./hydration";
+export {
+  QUERY_STATE_SCRIPT_ID,
+  hydrateQueryClientFromDocument,
+} from "./ssr";
+export type { QueryStateDocument } from "./ssr";
 export { queryOptions } from "./queryOptions";
 export { FocusManager, focusManager } from "./focusManager";
 export { OnlineManager, onlineManager } from "./onlineManager";
