@@ -10,9 +10,11 @@
     "start": "bun run generate:routes && bun run src/server/bun.ts",
     "typecheck": "bun run generate:routes && tsc --noEmit",
     "verify": "bun run generate:routes && bun run scripts/verify.tsx",
+    "build:static": "bun run generate:routes && bun run scripts/generate-static.ts",
+    "verify:static": "bun run scripts/verify-static.ts",
     "build:client": "bun build src/examples/counter-client.tsx --outdir dist/client --target browser",
     "build:todos": "bun build src/examples/todos-client.tsx --outdir dist/client --target browser",
-    "check": "bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run build:client && bun run build:todos"
+    "check": "bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run scripts/generate-static.ts && bun run scripts/verify-static.ts && bun run build:client && bun run build:todos"
   },
   "dependencies": {
     "hono": "4.13.3",
