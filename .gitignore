@@ -1,4 +1,5 @@
 node_modules/
 dist/
+.rxjs-fullstack-db/
 *.log
 .DS_Store

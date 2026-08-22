@@ -1,32 +1,38 @@
-import { defer, of } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 import { Hono } from 'hono';
 
 import { createTodoAction } from '../actions/todos';
+import type { TodoRepository } from '../database/todos-repository';
 import { parseCreateTodoInput } from '../domain/todos';
 import {
   invalidServerActionInput,
   registerServerAction,
 } from './action';
-import { addTodo, listTodos } from './todos-store';
 
-export const api = new Hono();
-const actions = new Hono();
+export interface CreateApiOptions {
+  readonly todosRepository: TodoRepository;
+}
 
-api.get('/todos', (context) => context.json([...listTodos()]));
+export const createApi = ({ todosRepository }: CreateApiOptions) => {
+  const api = new Hono();
+  const actions = new Hono();
 
-registerServerAction(actions, createTodoAction, {
-  parse: (value) =>
-    parseCreateTodoInput(value) ??
-    invalidServerActionInput('A non-empty todo title is required.'),
-  run: (input, { signal }) =>
-    defer(() => {
-      if (signal.aborted) {
-        throw new Error('Server action request was aborted.');
-      }
+  api.get('/todos', async (context) => {
+    const todos = await firstValueFrom(
+      todosRepository.list$({ signal: context.req.raw.signal }),
+    );
+    return context.json([...todos]);
+  });
 
-      return of(addTodo(input));
-    }),
-  successStatus: 201,
-});
+  registerServerAction(actions, createTodoAction, {
+    parse: (value) =>
+      parseCreateTodoInput(value) ??
+      invalidServerActionInput('A non-empty todo title is required.'),
+    run: (input, { signal }) =>
+      todosRepository.create$(input, { signal }),
+    successStatus: 201,
+  });
 
-api.route('/actions', actions);
+  api.route('/actions', actions);
+  return api;
+};
