@@ -21,7 +21,7 @@ export const todosRoute = createChildRoute<typeof rootBaseRoute>()({
     view: (
       <main>
         <h1>{parentData.appName} Todos</h1>
-        <p>Server data managed by rxjs-query.</p>
+        <p>Queries use Query/Cache; form mutations use RxJS server actions.</p>
         <TodosView />
       </main>
     ),

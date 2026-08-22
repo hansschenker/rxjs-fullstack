@@ -16,7 +16,7 @@ export const homeRoute = createChildRoute<typeof rootBaseRoute>()({
       view: (
         <HomePage
           title={title}
-          milestone="M01-M06 vertical slice with file-based route discovery"
+          milestone="M01-M07 vertical slice with forms and server actions"
         />
       ),
     };

@@ -1,26 +1,32 @@
+import { defer, of } from 'rxjs';
 import { Hono } from 'hono';
 
-import type { Todo } from '../queries/todos';
-
-let nextTodoId = 3;
-const todos: Todo[] = [
-  { id: 1, title: 'Port TanStack Query to RxJS', done: true },
-  { id: 2, title: 'Integrate rxjs-query into rxjs-fullstack', done: false },
-];
+import { createTodoAction } from '../actions/todos';
+import { parseCreateTodoInput } from '../domain/todos';
+import {
+  invalidServerActionInput,
+  registerServerAction,
+} from './action';
+import { addTodo, listTodos } from './todos-store';
 
 export const api = new Hono();
+const actions = new Hono();
 
-api.get('/todos', (context) => context.json(todos));
+api.get('/todos', (context) => context.json([...listTodos()]));
 
-api.post('/todos', async (context) => {
-  const body = await context.req.json<{ title?: string }>();
-  const title = body.title?.trim();
+registerServerAction(actions, createTodoAction, {
+  parse: (value) =>
+    parseCreateTodoInput(value) ??
+    invalidServerActionInput('A non-empty todo title is required.'),
+  run: (input, { signal }) =>
+    defer(() => {
+      if (signal.aborted) {
+        throw new Error('Server action request was aborted.');
+      }
 
-  if (!title) {
-    return context.json({ error: 'title is required' }, 400);
-  }
-
-  const todo: Todo = { id: nextTodoId++, title, done: false };
-  todos.push(todo);
-  return context.json(todo, 201);
+      return of(addTodo(input));
+    }),
+  successStatus: 201,
 });
+
+api.route('/actions', actions);

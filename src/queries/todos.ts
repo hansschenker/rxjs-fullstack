@@ -1,10 +1,9 @@
+import { invokeServerAction$ } from '../actions/action';
+import { createTodoAction } from '../actions/todos';
+import type { CreateTodoInput, Todo } from '../domain/todos';
 import { queryOptions } from '../query';
 
-export interface Todo {
-  readonly id: number;
-  readonly title: string;
-  readonly done: boolean;
-}
+export type { CreateTodoInput, Todo } from '../domain/todos';
 
 export const todosQuery = queryOptions({
   queryKey: ['todos'],
@@ -17,14 +16,5 @@ export const todosQuery = queryOptions({
   },
 });
 
-export const createTodo = async (title: string): Promise<Todo> => {
-  const response = await fetch('/api/todos', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ title }),
-  });
-  if (!response.ok) {
-    throw new Error(`POST /api/todos failed: ${response.status}`);
-  }
-  return (await response.json()) as Todo;
-};
+export const createTodo$ = (input: CreateTodoInput) =>
+  invokeServerAction$(createTodoAction, input);
