@@ -1,7 +1,7 @@
 import {
   DEFAULT_DATABASE_PATH,
-  createPgliteTodoRepository,
-} from '../database/pglite-todos-repository';
+  createPgliteApplicationRepositories,
+} from '../database/pglite-application-repositories';
 import { createApp } from '../server/app';
 import { createNodeServer, DEFAULT_NODE_PORT } from './node-adapter';
 
@@ -17,10 +17,13 @@ const parsePort = (value: string | undefined): number => {
 };
 
 export const nodePort = parsePort(process.env.PORT);
-export const todosRepository = await createPgliteTodoRepository({
+export const repositories = await createPgliteApplicationRepositories({
   dataDir: process.env.DATABASE_PATH ?? DEFAULT_DATABASE_PATH,
 });
-const databaseApp = createApp({ todosRepository });
+const databaseApp = createApp({
+  todosRepository: repositories.todosRepository,
+  authRepository: repositories.authRepository,
+});
 export const nodeServer = createNodeServer({
   port: nodePort,
   fetch: databaseApp.fetch,
@@ -30,7 +33,7 @@ console.log(`RxJS Fullstack listening on http://localhost:${nodePort} (Node.js)`
 
 const shutdown = (): void => {
   nodeServer.close(() => {
-    void todosRepository.close();
+    void repositories.close();
   });
 };
 

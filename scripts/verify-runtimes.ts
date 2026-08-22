@@ -49,6 +49,17 @@ const requestRuntime = async (
 ): Promise<Response> =>
   handler(new Request(`http://rxjs-fullstack.runtime${pathname}`));
 
+const getSetCookie = (headers: Headers): readonly string[] => {
+  const extended = headers as Headers & { getSetCookie?: () => string[] };
+  if (extended.getSetCookie) {
+    return extended.getSetCookie();
+  }
+  const combined = headers.get('set-cookie');
+  return combined ? combined.split(/,(?=[^;,]+=)/u) : [];
+};
+
+const cookiePair = (cookie: string): string => cookie.split(';', 1)[0] ?? '';
+
 assertEqual(
   bunRuntime.port,
   3000,
@@ -77,7 +88,8 @@ assertEqual(
 );
 
 const nodePort = 31_027;
-const nodeDatabaseRoot = await mkdtemp(join(tmpdir(), 'rxjs-fullstack-node-m11-'));
+const nodeOrigin = `http://127.0.0.1:${nodePort}`;
+const nodeDatabaseRoot = await mkdtemp(join(tmpdir(), 'rxjs-fullstack-node-m12-'));
 const nodeProcess = Bun.spawn(['node', 'dist/runtime/node.js'], {
   env: {
     ...Bun.env,
@@ -89,9 +101,9 @@ const nodeProcess = Bun.spawn(['node', 'dist/runtime/node.js'], {
 });
 
 const waitForNode = async (): Promise<Response> => {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  for (let attempt = 0; attempt < 160; attempt += 1) {
     try {
-      const response = await fetch(`http://127.0.0.1:${nodePort}/health`);
+      const response = await fetch(`${nodeOrigin}/health`);
       if (response.ok) {
         return response;
       }
@@ -102,7 +114,7 @@ const waitForNode = async (): Promise<Response> => {
     await Bun.sleep(50);
   }
 
-  throw new Error('M10-M11: Node runtime did not become ready.');
+  throw new Error('M10-M12: Node runtime did not become ready.');
 };
 
 try {
@@ -115,7 +127,7 @@ try {
   );
 
   const expectedAbout = await requestRuntime(fetchHandler, '/about');
-  const nodeAbout = await fetch(`http://127.0.0.1:${nodePort}/about`);
+  const nodeAbout = await fetch(`${nodeOrigin}/about`);
   assertEqual(nodeAbout.status, 200, 'M10: actual Node.js runtime should serve SSR routes.');
   assertEqual(
     await nodeAbout.text(),
@@ -123,7 +135,7 @@ try {
     'M10: Node adapter must not change the route/data/SSR result.',
   );
 
-  const nodeTodos = await fetch(`http://127.0.0.1:${nodePort}/api/todos`);
+  const nodeTodos = await fetch(`${nodeOrigin}/api/todos`);
   const nodeTodosJson = (await nodeTodos.json()) as ReadonlyArray<{
     readonly title: string;
   }>;
@@ -131,10 +143,57 @@ try {
     nodeTodosJson.some((todo) => todo.title === 'Port TanStack Query to RxJS'),
     'M11: actual Node runtime should expose the seeded database-backed Todo repository.',
   );
+
+  const nodeCredentials = new URLSearchParams({
+    email: 'node-runtime@rxjs-fullstack.test',
+    password: 'node-runtime-password',
+  });
+  const nodeRegister = await fetch(`${nodeOrigin}/auth/register`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: nodeOrigin,
+    },
+    body: nodeCredentials,
+    redirect: 'manual',
+  });
+  assertEqual(nodeRegister.status, 303, 'M12: real Node runtime should register an auth user.');
+
+  const nodeLogin = await fetch(`${nodeOrigin}/auth/login`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: nodeOrigin,
+    },
+    body: nodeCredentials,
+    redirect: 'manual',
+  });
+  assertEqual(nodeLogin.status, 303, 'M12: real Node runtime should authenticate the persisted user.');
+  assertEqual(
+    nodeLogin.headers.get('location'),
+    '/account/profile',
+    'M12: real Node login should redirect to the protected account route.',
+  );
+
+  const authCookies = getSetCookie(nodeLogin.headers);
+  const sessionCookie = authCookies.find((cookie) => cookie.startsWith('id='));
+  const csrfCookie = authCookies.find((cookie) => cookie.startsWith('csrf='));
+  assert(sessionCookie && csrfCookie, 'M12: real Node login should issue both authentication cookies.');
+  const authCookieHeader = `${cookiePair(sessionCookie)}; ${cookiePair(csrfCookie)}`;
+
+  const nodeAccount = await fetch(`${nodeOrigin}/account/profile`, {
+    headers: { cookie: authCookieHeader },
+    redirect: 'manual',
+  });
+  assertEqual(nodeAccount.status, 200, 'M12: real Node session should authorize protected SSR.');
+  assert(
+    (await nodeAccount.text()).includes('node-runtime@rxjs-fullstack.test'),
+    'M12: real Node protected SSR should receive the persisted authenticated user.',
+  );
 } finally {
   nodeProcess.kill(15);
   await nodeProcess.exited;
   await rm(nodeDatabaseRoot, { recursive: true, force: true });
 }
 
-console.log('M10-M11 runtime adapter verification passed.');
+console.log('M10-M12 runtime adapter verification passed.');

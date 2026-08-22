@@ -34,6 +34,7 @@ M08  SSR Query Prefetch / Client Data Continuity  ✅
 M09  Static Site Generation                       ✅
 M10  Runtime Adapters                             ✅
 M11  Database Integration                         ✅
+M12  Authentication                               ✅
 ```
 
 ## M01 — TypeScript JSX runtime
@@ -2736,7 +2737,817 @@ Runtime composition roots choose concrete dependencies.
 
 That is the larger M11 result: **the source of truth can move from memory to a real persistent database while the RxJS machine stays the same.**
 
-## What M01–M11 establish
+## M12 — Authentication
+
+M12 adds identity, server-side sessions, and protected routing without turning authentication into a second application framework.
+
+The application now has two categories of server state:
+
+```text
+business state                    security state
+TodoRepository                    AuthRepository
+      │                                 │
+      ▼                                 ▼
+Todos / mutations                users / sessions
+      │                                 │
+      └──────────────┬──────────────────┘
+                     ▼
+                 PGlite/Postgres
+```
+
+The important design rule is: **the server remains authoritative for identity; the browser carries credentials and opaque cookies, not an authentication state machine.**
+
+M12 deliberately does not introduce JWTs, browser `localStorage`, or a framework-owned client auth store.
+
+### Authentication operations are cold RxJS effects
+
+The domain-facing authentication service is:
+
+```text
+AuthService
+├── register$(credentials)
+├── login$(credentials)
+├── resolveSession$(sessionToken, csrfToken)
+└── logout$(sessionToken, csrfToken)
+```
+
+Each operation returns an Observable and is implemented with `defer(...)`.
+
+For registration:
+
+```text
+const register$ = authService.register$(credentials)
+       │
+       │ no subscription
+       ▼
+no user is created
+
+subscribe
+   ↓
+lookup email
+   ↓
+derive password hash
+   ↓
+persist user
+   ↓
+AuthUser emitted
+```
+
+The same rule applies to login, session resolution, and logout: constructing the Observable describes the effect; subscription starts the effect.
+
+This keeps authentication inside the same RxJS execution model used by queries, server actions, and database effects.
+
+### Credential parsing is an explicit trust boundary
+
+Authentication form data reaches the server as untrusted values.
+
+`src/auth/credentials.ts` normalizes and validates the credential package before the authentication service receives it:
+
+```text
+FormData
+  ↓
+unknown email/password values
+  ↓
+parseAuthCredentials()
+  ↓
+normalized email
+  +
+password length policy
+  ↓
+AuthCredentials
+```
+
+The current input policy is:
+
+```text
+email       trimmed + lowercased, max 254 characters
+password    12–128 characters
+```
+
+The parser is not a substitute for authentication. It only determines whether the incoming package has the shape the authentication machine is willing to process.
+
+### Passwords become slow salted derivations before persistence
+
+M12 never stores a plaintext password.
+
+The reference password hasher uses Web Crypto PBKDF2 with HMAC-SHA-256:
+
+```text
+password
+   +
+random 16-byte salt
+   ↓
+PBKDF2-HMAC-SHA256
+600,000 iterations
+   ↓
+32-byte derived key
+   ↓
+encoded password record
+```
+
+The stored format is explicit:
+
+```text
+pbkdf2-sha256$iterations$salt$derived-key
+```
+
+The production policy is:
+
+```ts
+PBKDF2_ITERATIONS = 600_000
+```
+
+The use of Web Crypto is deliberate: the same cryptographic boundary is available in the supported modern JavaScript runtimes, while the actual password policy remains behind the `PasswordHasher` interface and can later be replaced without changing the route, repository, or session model.
+
+Verification uses a deliberately smaller iteration count for speed, while separately asserting that the production constant remains `600_000`.
+
+### Password comparison does not compare plaintext records
+
+Login resolves the stored user by normalized email, derives the candidate password with the stored salt and iteration count, and compares derived bytes using a timing-stable accumulator.
+
+Conceptually:
+
+```text
+submitted password
+       ↓
+derive with stored salt/policy
+       ↓
+candidate bytes
+       │
+       ├──── constant-time byte comparison ──── stored bytes
+       │
+       ▼
+match / reject
+```
+
+A failed password never creates a session.
+
+### Sessions are opaque server-side records
+
+M12 does not encode user identity or authorization claims into a browser-readable bearer object.
+
+Successful login generates two independent 32-byte random values:
+
+```text
+session token      256 random bits
+CSRF token         256 random bits
+```
+
+The raw session token is returned only to the browser cookie boundary. Before persistence it is hashed with SHA-256:
+
+```text
+random session token
+        ↓
+SHA-256
+        ↓
+token_hash stored in auth_sessions
+```
+
+The database never needs the bearer token itself.
+
+The server-side session record contains:
+
+```text
+token_hash
+user_id
+csrf_hash
+expires_at
+created_at
+```
+
+The raw token therefore has one purpose: prove possession when the browser makes a later request.
+
+### Session lifetime is explicit
+
+The current session TTL is seven days:
+
+```text
+login
+  ●──────────────────────────────●
+  now                       expiresAt
+            7 days
+```
+
+When a session is resolved, M12 checks the stored expiry. An expired session is deleted and treated as unauthenticated.
+
+Session expiry remains server-authoritative even though the browser cookie receives a corresponding `Max-Age`.
+
+### The session cookie is intentionally boring
+
+The browser receives the opaque session token in cookie `id`.
+
+Its important attributes are:
+
+```text
+Path=/
+HttpOnly
+SameSite=Strict
+Max-Age=<session TTL>
+Secure on HTTPS
+```
+
+The cookie contains no user profile, role list, route state, Query/Cache state, or serialized Observable.
+
+Because it is `HttpOnly`, normal browser JavaScript does not need access to the session bearer token.
+
+On HTTPS requests the cookie is also emitted with `Secure`; the verifier checks this behavior explicitly.
+
+### CSRF uses a session-bound companion token
+
+M12 also issues cookie `csrf`.
+
+Unlike the session cookie, the CSRF companion is not `HttpOnly`, because the current logout form must be able to carry the token as form data. It still uses:
+
+```text
+Path=/
+SameSite=Strict
+Max-Age=<session TTL>
+Secure on HTTPS
+```
+
+The server stores only `SHA-256(csrfToken)` in the session row.
+
+For logout, three values must agree:
+
+```text
+hidden form csrf token
+       │
+       │ constant-time equality
+       ▼
+csrf cookie token
+       │
+       │ SHA-256
+       ▼
+stored session csrf_hash
+```
+
+If any relationship fails, logout returns HTTP `403` and the session remains active.
+
+### Authentication mutations also enforce same-origin intent
+
+Registration, login, and logout reject explicit cross-site mutation requests.
+
+The HTTP boundary compares the request `Origin` with the request URL origin and rejects `Sec-Fetch-Site: cross-site`.
+
+Conceptually:
+
+```text
+POST /auth/*
+     ↓
+explicit cross-site request?
+   ├── yes → 403
+   └── no  → continue authentication flow
+```
+
+This is additive defense alongside `SameSite=Strict` cookies and the logout CSRF token.
+
+### Cookie issuance stays at the HTTP boundary
+
+M07 established generic RxJS server actions for application effects. M12 deliberately does not force login into that abstraction.
+
+Authentication has HTTP-specific response semantics:
+
+```text
+successful login
+     ↓
+Set-Cookie: id=...
+Set-Cookie: csrf=...
+     ↓
+303 redirect
+     ↓
+/account/profile
+```
+
+Those are transport concerns owned by Hono.
+
+The separation is:
+
+```text
+AuthService.login$()
+   owns authentication execution
+
+AuthRepository
+   owns persistence
+
+Hono /auth/login
+   owns FormData, cookies, status code, redirect
+```
+
+The HTTP adapter subscribes to the cold authentication Observable and translates the resolved result into cookies and a redirect. M12 therefore reuses RxJS without hiding HTTP protocol behavior behind a generic action name.
+
+### Registration uses POST/redirect/GET
+
+The public registration page renders an ordinary HTML form:
+
+```text
+GET /register
+      ↓
+HTML form
+      ↓
+POST /auth/register
+      ↓
+register$()
+      ↓
+user persisted
+      ↓
+303 /login?registered=1
+```
+
+A successful registration does not automatically create a logged-in session. The user explicitly crosses the login boundary afterward.
+
+This keeps account creation and session creation as two separate effects.
+
+### Login creates the session and redirects to protected content
+
+Login is:
+
+```text
+GET /login
+   ↓
+HTML form
+   ↓
+POST /auth/login
+   ↓
+parse credentials
+   ↓
+AuthService.login$()
+   ↓
+password verification
+   ↓
+persist hashed session identity
+   ↓
+Set-Cookie id + csrf
+   ↓
+303 /account/profile
+```
+
+Invalid credentials do not reveal whether the email or password was the failing component; the login page receives one generic invalid-credentials state.
+
+### Authentication is resolved before route rendering
+
+For page requests, `src/server/app.tsx` resolves the current session before it invokes the route-document renderer:
+
+```text
+HTTP request
+    ↓
+read id + csrf cookies
+    ↓
+AuthService.resolveSession$()
+    ↓
+ResolvedAuthSession | null
+    ↓
+renderRouteDocument({ auth })
+    ↓
+ServerRouteContext.auth
+    ↓
+rxjs-router loader
+```
+
+The route therefore receives already-resolved identity state rather than parsing cookies or querying the session table itself.
+
+This extends the same boundary pattern used for M08 query prefetch: asynchronous work resolves before pure view rendering.
+
+### Protected routing is server-authoritative
+
+M12 adds:
+
+```text
+/account/$section
+```
+
+The account loader inspects `ServerRouteContext.auth`.
+
+Anonymous request:
+
+```text
+GET /account/profile
+      ↓
+auth = null
+      ↓
+rxjs-router redirect()
+      ↓
+302 /login
+```
+
+Authenticated request:
+
+```text
+GET /account/profile
+      ↓
+valid server session
+      ↓
+auth.user
+      ↓
+AccountPage
+      ↓
+200 protected SSR
+```
+
+This is authorization at the server route boundary. The browser does not decide that it is logged in merely because it has rendered some client state.
+
+### The authenticated user is a small package
+
+The route context carries:
+
+```text
+ResolvedAuthSession
+├── user
+│   ├── id
+│   └── email
+├── sessionTokenHash
+├── csrfValid
+└── csrfToken?  only when the cookie matches the stored session hash
+```
+
+The password hash and raw session token never enter route JSX.
+
+The protected page receives only the values it needs to render authenticated identity and a safe logout form.
+
+### Authentication pages are not cached as personalized runtime responses
+
+Runtime responses for:
+
+```text
+/login
+/register
+/account/*
+```
+
+receive:
+
+```text
+Cache-Control: no-store
+```
+
+This avoids treating auth-related runtime pages as reusable personalized cache entries.
+
+The static forms `/login` and `/register` contain no user-specific server state, so they can still be generated as public static HTML; the runtime response policy remains `no-store` when those routes are served dynamically.
+
+### M12 composes with M09 SSG instead of disabling it
+
+Route discovery now finds seven page modules, but automatic static generation produces six concrete public paths:
+
+```text
+/
+/about
+/counter
+/login
+/register
+/todos
+```
+
+The protected account route is intentionally:
+
+```text
+/account/$section
+```
+
+and M09's existing rule excludes parameterized routes from automatic generation.
+
+That gives M12 a useful boundary:
+
+```text
+public auth entry pages       static-capable
+protected user route          request-time only
+```
+
+No special `if (route === account)` branch was added to the SSG engine.
+
+### M12 extends the M11 migration history
+
+Authentication persistence is migration version 2:
+
+```text
+version 1  create_todos
+version 2  create_authentication
+```
+
+The new schema is:
+
+```text
+auth_users
+├── id
+├── email UNIQUE
+├── password_hash
+└── created_at
+
+auth_sessions
+├── token_hash PRIMARY KEY
+├── user_id → auth_users(id)
+├── csrf_hash
+├── expires_at
+└── created_at
+```
+
+Deleting an auth user cascades to that user's sessions.
+
+An index on `auth_sessions.expires_at` establishes the obvious future cleanup path without introducing a cleanup scheduler into M12.
+
+### Todos and authentication share one persistent database process
+
+M11 originally opened PGlite for the Todo repository. M12 refactors that composition so Bun and Node open one database and derive both repositories from it:
+
+```text
+openPgliteDatabase()
+        ↓
+        ├── TodoRepository
+        │
+        └── AuthRepository
+        ↓
+createApp({
+  todosRepository,
+  authRepository
+})
+```
+
+The process owns one database lifetime and closes it once.
+
+The repository interfaces remain independent even though the reference implementation shares one Postgres engine.
+
+### Portable composition remains possible
+
+The default exported application uses:
+
+```text
+memory TodoRepository
++
+memory AuthRepository
+```
+
+That keeps framework verification, SSG, and the fetch-native runtime graph independent of filesystem persistence.
+
+Bun and Node composition roots instead inject the PGlite-backed repositories.
+
+This preserves the M10/M11 dependency direction:
+
+```text
+runtime composition root
+      ↓ chooses
+persistence implementations
+      ↓ injected into
+application
+      ↓ hosted by
+runtime adapter
+```
+
+Authentication therefore does not make `app.fetch` intrinsically filesystem-bound.
+
+### Auth persistence also remains observable and cancellable-before-start
+
+The generic `RepositoryOperationOptions` introduced for M11 is now shared by Todo and Auth repositories.
+
+Before starting a repository effect, the implementation checks the request `AbortSignal`.
+
+```text
+request aborted before repository effect?
+   ├── yes → do not start persistence operation
+   └── no  → run operation
+```
+
+As with M11, M12 does not claim that a Promise-based Web Crypto operation or an already-entered PGlite query can be forcibly interrupted mid-operation when the underlying API provides no such primitive.
+
+The cancellation claim remains precise rather than aspirational.
+
+### No browser auth store is required
+
+M12 does not add:
+
+```text
+BehaviorSubject<CurrentUser>
+localStorage session token
+JWT decoder
+client auth singleton
+```
+
+The browser has ordinary web state:
+
+```text
+HttpOnly session cookie
+CSRF companion cookie
+current rendered page
+```
+
+When the application needs authoritative identity, it asks the server either by navigating to a protected route or by calling:
+
+```text
+GET /auth/session
+```
+
+That endpoint returns only:
+
+```json
+{ "user": { "id": 1, "email": "..." } }
+```
+
+or:
+
+```json
+{ "user": null }
+```
+
+The session itself remains server-side.
+
+### M12 source map
+
+```text
+src/auth/types.ts
+  AuthUser / credentials / created and resolved session packages
+
+src/auth/credentials.ts
+  email normalization
+  credential parsing and length policy
+
+src/auth/password.ts
+  PBKDF2 PasswordHasher
+  random opaque token creation
+  SHA-256 token hashing
+  timing-stable equality
+
+src/auth/service.ts
+  cold register$ / login$ / resolveSession$ / logout$
+  session TTL
+  auth-specific errors
+
+src/database/repository.ts
+  shared repository AbortSignal options
+
+src/database/auth-repository.ts
+  typed AuthRepository persistence port
+
+src/database/memory-auth-repository.ts
+  deterministic portable auth persistence
+
+src/database/pglite-database.ts
+  shared PGlite open/migrate/seed/close lifetime
+
+src/database/pglite-auth-repository.ts
+  explicit SQL auth persistence
+
+src/database/pglite-application-repositories.ts
+  one PGlite instance
+  TodoRepository + AuthRepository composition
+
+src/database/migrations.ts
+  migration 2: auth_users + auth_sessions
+
+src/server/auth.ts
+  Hono form/cookie/redirect boundary
+  same-origin mutation checks
+  CSRF verification
+  request session resolution
+
+src/server/app.tsx
+  AuthService composition
+  /auth registration
+  session resolution before page rendering
+  no-store auth page policy
+
+src/server/route-context.ts
+  resolved auth package available to route loaders
+
+src/render/page.ts
+  inject auth into rxjs-router context
+
+src/routes/login.tsx
+  public login page
+
+src/routes/register.tsx
+  public registration page
+
+src/routes/account.tsx
+  protected /account/$section route
+  anonymous redirect
+
+src/examples/auth.tsx
+  pure SSR login/register/account views
+
+scripts/verify-auth.ts
+  authentication semantic and persistence verification
+
+scripts/verify-runtimes.ts
+  actual Node registration/login/cookie/protected-SSR proof
+```
+
+### M12 verification
+
+The dedicated authentication verifier treats the security and execution model as executable requirements.
+
+It proves that:
+
+- constructing `register$()` does not create a user before subscription,
+- subscribing creates the user,
+- the stored password value is not plaintext,
+- the stored password record is a salted PBKDF2 derivation,
+- the production PBKDF2 policy remains 600,000 iterations,
+- a wrong password does not create a session,
+- opaque session tokens contain 32 bytes of random input before encoding,
+- the repository stores the session hash rather than the bearer token,
+- an anonymous request to `/account/profile` redirects to `/login`,
+- registration follows POST/redirect/GET,
+- an explicit cross-site login request receives HTTP `403`,
+- successful login redirects to `/account/profile`,
+- login sets both the session and CSRF cookies,
+- the session cookie is `HttpOnly` and `SameSite=Strict`,
+- the CSRF cookie is `SameSite=Strict` and intentionally not `HttpOnly`,
+- HTTPS login marks auth cookies `Secure`,
+- `/auth/session` resolves the authenticated user,
+- protected SSR receives the authenticated email,
+- protected SSR renders the session-bound CSRF value into the logout form,
+- a bad logout CSRF value receives HTTP `403`,
+- a valid logout revokes the server-side session,
+- the old cookie cannot authorize the account route after revocation,
+- PGlite users and sessions survive database close/reopen.
+
+The actual runtime verifier additionally starts:
+
+```text
+node dist/runtime/node.js
+```
+
+with a temporary PGlite database and proves:
+
+```text
+register user
+    ↓
+login user
+    ↓
+receive id + csrf cookies
+    ↓
+GET /account/profile with cookies
+    ↓
+200 protected SSR containing persisted user email
+```
+
+This confirms that the authentication model survives the real M10 runtime and M11 persistence composition, not only the in-process verifier.
+
+The final acceptance pipeline is now:
+
+```text
+route generation
+      ↓
+strict TypeScript
+      ↓
+M01-M12 executable verification
+      ↓
+M11 database verification
+      ↓
+M12 authentication verification
+      ↓
+static generation of public concrete routes
+      ↓
+static artifact verification
+      ↓
+Node runtime build
+      ↓
+edge/Worker build
+      ↓
+real Node + database + authentication verification
+      ↓
+browser client bundles
+```
+
+### What M12 establishes
+
+M12 adds a reusable identity boundary while preserving the framework's existing responsibilities:
+
+```text
+browser request
+      ↓
+Hono HTTP boundary
+      ↓
+opaque session cookie
+      ↓
+AuthService.resolveSession$()
+      ↓
+AuthRepository
+      ↓
+ResolvedAuthSession | null
+      ↓
+ServerRouteContext.auth
+      ↓
+rxjs-router authorization decision
+      ↓
+resolved ViewChild
+      ↓
+pure SSR
+```
+
+The responsibility map is:
+
+```text
+Web Crypto         password derivation + random tokens + token hashes
+AuthRepository     users and server-side sessions
+AuthService        authentication execution
+Hono               forms, cookies, redirects, HTTP/CSRF boundary
+rxjs-router        protected-route control flow
+ServerRouteContext resolved authenticated identity
+PGlite/Postgres    persistent reference implementation
+RxJS               lazy authentication effect execution
+```
+
+The broader M12 principle is: **authentication changes who may execute a route; it does not change the RxJS machine that executes the application.**
+
+## What M01–M12 establish
 
 ```text
 M01  JSX is a typed description of a view.
@@ -2749,7 +3560,8 @@ M07  Forms drive typed, lazy, cancellable RxJS server actions.
 M08  Server-resolved query state continues into browser Query/Cache.
 M09  The same page machine can execute at build time to produce static HTML.
 M10  Multiple runtimes host the same Web Request → Response application.
-M11  Persistent database effects enter through an injected RxJS repository port.
+M11  Persistent database effects enter through injected RxJS repository ports.
+M12  Server-side identity and sessions control route access without a client auth machine.
 ```
 
 The current architecture is:
@@ -2761,37 +3573,46 @@ framework ViewChild
       ↓
 file-discovered rxjs-router tree
       ↓
-route loaders + RxJS Query/Cache execution
+request-time route context
+      ├── QueryClient
+      ├── fetch boundary
+      └── ResolvedAuthSession | null
+      ↓
+route loaders
+      ├── Query/Cache execution
+      └── authentication / authorization decisions
       ↓
 resolved PageData
       ↓
 shared route-document renderer
-      ├──────── build time ──────────► dist/static/**/index.html
-      │                               + dehydrated Query/Cache state
+      ├──────── build time ──────────► public static HTML
+      │                               / /about /counter
+      │                               /login /register /todos
       │
       └──────── request time ────────► Hono app
                                          │
-                                         ▼
-                             TodoRepository Observable effects
-                                  │                 │
-                                  ▼                 ▼
-                         memory repository      PGlite/Postgres
-                         portable/test/SSG       Bun + Node
-                                  │                 │
-                                  └────────┬────────┘
-                                           ▼
-                                      Web Response
-                                           │
-                              ┌────────────┼────────────┐
-                              ▼            ▼            ▼
-                             Bun         Node.js     fetch-native
-                                          │          edge runtime
-                                          ▼
-                                 @hono/node-server
+                         ┌───────────────┴────────────────┐
+                         ▼                                ▼
+               TodoRepository effects           AuthService effects
+                         │                                │
+                         ▼                                ▼
+                  TodoRepository                  AuthRepository
+                         │                                │
+                         ├────────────┬───────────────────┤
+                         ▼            ▼                   ▼
+                       memory     shared PGlite       memory auth
+                       / SSG       / Postgres         / portable
+                                     │
+                              Bun + Node runtime
+                                     │
+                                     ▼
+                                 Web Response
 
 browser side
       ↓
-Query/Cache hydration + DOM bindings + form/action dataflows
+HttpOnly opaque session cookie + CSRF companion cookie
+      ↓
+Query/Cache hydration + DOM bindings + application form/action dataflows
       ↓
 RxJS Subscription-owned execution
 ```
@@ -2822,7 +3643,7 @@ bun run start:bun
 
 Then open `http://localhost:3000`.
 
-Bun's M11 server composition uses the persistent PGlite repository. By default its data is stored under:
+The Bun composition uses one persistent PGlite database for both Todos and authentication. By default its data is stored under:
 
 ```text
 ./.rxjs-fullstack-db
@@ -2856,13 +3677,34 @@ bun run verify:database
 
 This uses a temporary filesystem database and proves cold repository effects, migration/seed behavior, persistence across reopen, HTTP reads, and server-action writes.
 
+### Authentication verification
+
+```sh
+bun run verify:auth
+```
+
+This verifies the cold auth service, password hashing, opaque session storage, cookie policy, CSRF-protected logout, protected SSR routing, and persistent users/sessions.
+
 ### Static site generation
 
 ```sh
 bun run build:static
 ```
 
-Generated pages are written under `dist/static/`. The SSG/reference `app` composition remains deterministic and does not require the persistent filesystem database.
+Generated public pages are written under `dist/static/`.
+
+The current automatic static set is:
+
+```text
+/
+/about
+/counter
+/login
+/register
+/todos
+```
+
+`/account/$section` is protected and parameterized, so it is intentionally excluded by M09's automatic static-route rule.
 
 ### Runtime builds and verification
 
@@ -2880,11 +3722,18 @@ GET  /
 GET  /about
 GET  /counter
 GET  /todos
+GET  /login
+GET  /register
+GET  /account/:section
 GET  /api/todos
 POST /api/actions/todos.create
+POST /auth/register
+POST /auth/login
+POST /auth/logout
+GET  /auth/session
 ```
 
-The older `/hello/:name` code remains in `src/examples/routes.tsx` as a typed-routing proof for path-derived params and `href()` generation; it is not part of the generated M06–M11 application route tree.
+The older `/hello/:name` code remains in `src/examples/routes.tsx` as a typed-routing proof for path-derived params and `href()` generation; it is not part of the generated M06–M12 application route tree.
 
 ## Development collaboration
 
@@ -2896,4 +3745,4 @@ See [`CONTRIBUTORS.md`](./CONTRIBUTORS.md) for the project contributor list.
 
 ## Architectural rule
 
-The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, `rxjs-router` owns routing semantics, Hono owns HTTP, repository ports own persistence contracts, runtime composition roots select concrete dependencies, and Bun remains the reference development/build tool rather than framework semantics.
+The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, `rxjs-router` owns routing semantics, Hono owns HTTP and cookie/redirect boundaries, repository ports own persistence contracts, authentication is resolved server-side before protected routing, runtime composition roots select concrete dependencies, and Bun remains the reference development/build tool rather than framework semantics.
