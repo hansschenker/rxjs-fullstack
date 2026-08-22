@@ -61,17 +61,15 @@ export const TodoSnapshot = ({ todos }: { readonly todos: readonly Todo[] }) => 
   </section>
 );
 
-const TodoFormFields = () => (
-  <>
-    <input
-      name="title"
-      type="text"
-      placeholder="What needs doing?"
-      required
-    />
-    <button type="submit">Add</button>
-  </>
-);
+const TodoFormFields = (): ViewChild => [
+  <input
+    name="title"
+    type="text"
+    placeholder="What needs doing?"
+    required
+  />,
+  <button type="submit">Add</button>,
+];
 
 export const TodoApp = () => {
   const submit$ = new Subject<SubmitEvent>();
