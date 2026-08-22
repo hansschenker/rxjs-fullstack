@@ -4,16 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An experimental minimal fullstack framework whose execution model is RxJS: TypeScript JSX (no React) describes views, RxJS owns state/effects/cancellation, Hono owns HTTP, Bun hosts the app. The README is the design document — it narrates the milestones (M01 JSX runtime, M02 DOM bindings, M03 HTML/SSR renderer, M04 Hono+Bun server, M05 routing) and the reasoning behind each boundary. Read the relevant milestone section before changing that layer.
+An experimental minimal fullstack framework whose execution model is RxJS: TypeScript JSX (no React) describes views, RxJS owns state/effects/cancellation, Hono owns HTTP, Bun hosts the app. The README is the design document — it narrates the milestones (M01 JSX runtime, M02 DOM bindings, M03 HTML/SSR renderer, M04 Hono+Bun server, M05 routing + Query/Cache, M06 file-based route discovery) and the reasoning behind each boundary. Read the relevant milestone section before changing that layer.
 
 The Query/Cache layer lives in `src/query/` — TanStack Query reimagined as pure RxJS. It was vendored from the formerly standalone `rxjs-query` package and is now part of the framework, published with it; do not reintroduce it as an external dependency. App-level query definitions (e.g. the todos query) live in `src/queries/`. The vendored module's vitest suite was not ported — behavior checks for it belong in `scripts/verify.tsx`.
 
+M06 page routes live in `src/routes/*.tsx`. Each page module default-exports its `rxjs-router` route object. `scripts/generate-routes.ts` discovers those files and regenerates the complete typed route tree in `src/routes.generated.ts`; `src/routes.tsx` is only the stable public re-export and must not hand-maintain page imports.
+
 ## Commands
 
-- `bun run check` — typecheck + verify + build both example clients. **This must pass before any change counts as done.**
-- `bun run verify` — runs `scripts/verify.tsx`, the executable spec (laziness, single-execution, SSR Observable rejection, etc.). New invariants belong here.
-- `bun run typecheck` — `tsc --noEmit`.
-- `bun run dev` — hot-reload dev server on port 3000 (`src/server/bun.ts`).
+- `bun run check` — generate routes + typecheck + verify + build both example clients. **This must pass before any change counts as done.**
+- `bun run generate:routes` — regenerate the deterministic page-route manifest/tree.
+- `bun run verify` — regenerates routes and runs `scripts/verify.tsx`, the executable spec (laziness, single-execution, SSR Observable rejection, generated-route discovery, etc.). New invariants belong here.
+- `bun run typecheck` — regenerates routes and runs `tsc --noEmit`.
+- `bun run dev` — regenerates routes, then starts the hot-reload dev server on port 3000 (`src/server/bun.ts`).
 - `bun run build:client` / `bun run build:todos` — bundle the example clients to `dist/client`.
 
 ## CI environment setup (GitHub Actions agent runs)
@@ -26,12 +29,15 @@ curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"
 
 # 2. Sibling (must sit NEXT TO this repo's checkout)
-git clone --depth 1 https://github.com/hansschenker/rxjs-router ../rxjs-router   # ships dist/, works as-is
+git clone --depth 1 https://github.com/hansschenker/rxjs-router ../rxjs-router
+(cd ../rxjs-router && bun install --production)
 
-# 3. Install and verify
+# 3. Install and verify this repo
 bun install
 bun run check
 ```
+
+The sibling production install is required because browser bundling follows `rxjs-router/dist/*.js` from the sibling directory and resolves its runtime `rxjs` dependency from there.
 
 ## Architecture invariants (enforce these in every change and review)
 
@@ -39,7 +45,9 @@ bun run check
 - **The JSX runtime creates no DOM and owns no lifecycle.** `src/jsx/runtime.ts` only normalizes children into `ViewChild` nodes. Rendering, subscribing, and state live elsewhere.
 - **Cancellation has one owner.** `mount(view, container)` (`src/render/dom.ts`) returns the RxJS `Subscription` that is the view's lifetime; unsubscribing must tear down listeners, child subscriptions, and DOM. When an Observable child emits, the previous child's subscription is unsubscribed before the replacement renders.
 - **Events flow through Observers, meaning flows through the dataflow.** The renderer forwards DOM events into `on={{ click: subject$ }}` observers; it never interprets them. State machines are explicit RxJS pipelines (`scan`, `startWith`, `shareReplay`).
-- **Hono owns HTTP; `src/server/bun.ts` is only the Bun adapter** (port + `fetch` forwarding). Framework routes register through the routing layer (`registerPageRoute()` in `src/server/app.tsx`), not ad-hoc per-route subscription code.
+- **`rxjs-router` owns routing semantics.** M06 discovery may locate and assemble route modules, but it must not duplicate route matching, loaders, navigation, cancellation, or URL behavior.
+- **Page-route discovery is deterministic and strongly typed.** `src/routes/*.tsx` modules default-export route objects; the generator sorts filenames and emits the complete root `createRoute({ children: [...] })` tree so `rxjs-router` keeps const-tuple inference. `src/routes.tsx` must not return to hand-maintained page imports.
+- **Hono owns HTTP; `src/server/bun.ts` is only the Bun adapter** (port + `fetch` forwarding). The server resolves the shared router tree instead of adding ad-hoc per-page subscription code.
 - **No React, ever** — no react/react-dom dependency, no React idioms smuggled in. JSX compiles to the framework's own `jsx()`/`Fragment`.
 
 ## Working style

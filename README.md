@@ -9,14 +9,12 @@
 The framework is deliberately small. Existing web-community technologies keep their own responsibilities:
 
 - **TypeScript** — language, strong typing, and JSX compilation.
-- **RxJS 7** — lazy dataflows, state, effects, cancellation, sharing, and later query caching.
+- **RxJS 7** — lazy dataflows, state, effects, cancellation, sharing, and query caching.
 - **TypeScript JSX** — React-like component syntax without React.
 - **Hono** — Web-API HTTP layer.
 - **Bun** — reference runtime for the first implementation.
 
-The planned framework capabilities are file-based routing, SSR, SSG, and Query/Cache.
-Routing and route data resolution are provided by the sibling `rxjs-router`
-package.
+The framework is growing toward file-based routing, SSR, SSG, and Query/Cache while keeping routing and route data resolution in the sibling `rxjs-router` package.
 
 ## First vertical slice: M01–M04
 
@@ -118,7 +116,7 @@ map body through renderDocument()
 HTML response
 ```
 
-In the original M03–M04 vertical slice, the home-page request pipeline was built directly in the server module: `defer()` created a cold request dataflow, the resolved model was mapped through `HomePage`, then through `renderToString`, and finally through `renderDocument`. M05 keeps the same execution rule but moves this repeated route machinery behind the typed routing abstraction.
+In the original M03–M04 vertical slice, the home-page request pipeline was built directly in the server module: `defer()` created a cold request dataflow, the resolved model was mapped through `HomePage`, then through `renderToString`, and finally through `renderDocument`. M05 keeps the same execution rule but moves this repeated route machinery behind the routing abstraction.
 
 Because rendering is just a pure function inside the RxJS pipeline, the renderer does not hide execution, concurrency, cancellation, or subscription policy. RxJS remains responsible for how and when server data is produced; the HTML renderer is responsible only for turning an already resolved view into text.
 
@@ -132,7 +130,7 @@ M04 completes the first vertical slice by connecting the RxJS SSR pipeline to an
 
 Hono owns HTTP routing. The application exposes a health endpoint and SSR page routes. In the first vertical slice, the root route directly consumed the cold home-page dataflow with `firstValueFrom()`. This established the explicit boundary where an HTTP request asks an RxJS dataflow for the response value.
 
-M05 later centralizes that same boundary inside `registerPageRoute()`, so route-specific code no longer has to repeat the subscription and rendering bridge.
+M05 later centralizes route matching and data resolution through `rxjs-router`, so route-specific code no longer repeats HTTP integration machinery.
 
 The server application and runtime adapter remain intentionally separate:
 
@@ -146,7 +144,7 @@ M04 therefore proves the end-to-end server path:
 ```text
 request
   → Hono route
-  → cold RxJS dataflow
+  → RxJS/router data resolution
   → typed model
   → JSX
   → HTML
@@ -156,11 +154,16 @@ request
 
 The verification script calls the Hono application directly, checks the root SSR response, checks the health endpoint, and confirms that the full M01–M04 path works without requiring a separately running HTTP server.
 
-## M05 — Strongly typed routing
+## M05 — Strongly typed routing and Query/Cache
 
 M05 turns the first server slice into reusable framework infrastructure while keeping RxJS visible as the execution model.
 
-The central rule is: **declare a route once and derive as much TypeScript information as possible from that declaration.**
+The repository contains two complementary routing pieces developed during M05:
+
+- the in-repo typed route experiment in `src/router/`, including path-literal-derived params and typed `href(...)`,
+- the running application integration with the sibling `rxjs-router` package, used by both server and browser routing.
+
+The central rule remains: **declare route behavior explicitly and derive as much TypeScript information as possible from that declaration.**
 
 A literal route path such as:
 
@@ -193,159 +196,60 @@ produces the effective type:
 }
 ```
 
-### Typed page route
+M05 also integrates the framework-owned Query/Cache layer in `src/query/`. The Todo vertical slice uses query definitions under `src/queries/`, browser query streams, mutation streams, invalidation, and a Hono `/api/todos` endpoint. Query behavior remains RxJS dataflow rather than a separate component lifecycle.
 
-A page route combines the values and functions that belong to one page:
+### rxjs-router integration
 
-- a literal route path,
-- a path-derived `RouteParams<Path>` type,
-- a typed `RouteLoadContext<Path>`,
-- a loader returning `Observable<Model>`,
-- a view function from `Model` to JSX,
-- typed page metadata such as `title`,
-- and a typed `href(...)` helper for URL construction.
+Route definitions are shared by the server and browser. The server uses `resolveRequest()` before passing resolved JSX to the pure HTML renderer. The browser uses `createBrowserHistory()` and `router.state$` as the live application view source for the DOM renderer.
 
-A route therefore looks like normal strongly typed TypeScript while preserving an explicit RxJS loader:
+Route modules live under `src/routes/`. Through M05, `src/routes.tsx` manually imported each page route and assembled them under the root route. That manual barrel established the correct module boundary but still required central registration whenever a page file was added.
 
-```tsx
-export const helloRoute = definePageRoute('/hello/:name')({
-  load: ({ params }) =>
-    of({
-      name: params.name,
-    }),
+## M06 — File-based route discovery
 
-  view: ({ name }) => (
-    <main>
-      <h1>Hello {name}</h1>
-      <p>The route parameter was inferred from the path literal.</p>
-    </main>
-  ),
+M06 removes that manual registration step without moving routing semantics out of `rxjs-router`.
 
-  title: ({ name }) => `Hello ${name}`,
-});
-```
+The convention is deliberately small:
 
-What flows through the server route is:
+- page route modules live in `src/routes/*.tsx`,
+- every page module default-exports its `rxjs-router` route object,
+- non-page support modules such as `root.ts` and `types.ts` remain ordinary TypeScript files,
+- `scripts/generate-routes.ts` discovers the page modules and writes the complete typed route tree to `src/routes.generated.ts`,
+- `src/routes.tsx` becomes a stable public re-export rather than a hand-maintained page registry.
+
+The flow is now:
 
 ```text
-literal path
-    ↓
-inferred route params
-    ↓
-typed RouteLoadContext
-    ↓
-cold Observable<Model>
-    ↓
-typed Model
-    ↓
-view(Model)
-    ↓
-JSX
-    ↓
-renderToString()
-    ↓
-HTML document
-    ↓
-HTTP response
+src/routes/*.tsx
+      ↓
+Bun.Glob discovery
+      ↓
+sorted page imports
+      ↓
+generated createRoute({ children: [...] }) root tree
+      ↓
+src/routes.generated.ts
+      ↓
+src/routes.tsx public re-export
+      ↓
+server resolveRequest() / browser createRouter()
 ```
 
-The loader deliberately returns `Observable<Model>` rather than `Promise<Model>`. The route is therefore still an RxJS dataflow description: execution remains lazy until the HTTP integration subscribes to it.
+Generating the root `createRoute()` call together with its inline `children: [...]` tuple is important for TypeScript: `rxjs-router` can preserve the exact const tuple and derive the application route-state types across the whole tree.
 
-### Hono integration boundary
+The generator does **not** implement route matching, data loading, cancellation, navigation, or URL semantics. Those responsibilities stay in `rxjs-router`. It only performs build-time discovery and assembly—the coordination that the fullstack framework needs around the router.
 
-`registerPageRoute(app, route)` is the framework boundary between Hono's runtime route matching and the strongly typed application route.
+The generated file is committed so TypeScript, editors, and consumers always see a concrete route tree, but it is regenerated before development, startup, typechecking, verification, and the full `check` command. Route order is deterministic because discovered filenames are sorted before generation.
 
-Hono performs the actual HTTP path match. Its string-keyed runtime params are lifted once into the TypeScript type derived from the route path. Above that boundary, application code works with strongly typed params rather than untyped strings indexed by arbitrary names.
+A new `src/routes/about.tsx` page is the M06 proof. It is never imported by hand in `src/routes.tsx`; the generator discovers it, and `/about` participates in the same SSR route tree as `/`, `/counter`, and `/todos`.
 
-The route adapter then creates the request dataflow with `defer()`, lets the typed loader produce `Observable<Model>`, maps the model through the view and HTML renderers, and finally uses `firstValueFrom()` at the HTTP boundary to produce the Hono response.
+The verification script checks both sides of the invariant:
 
-This keeps the responsibilities explicit:
+- `generatedRouteFiles` contains `about.tsx`, proving discovery,
+- `GET /about` returns the SSR page, proving that the generated route object actually reached `rxjs-router` and the server pipeline.
 
-```text
-Hono
-  runtime path matching
-        ↓
-rxjs-fullstack route boundary
-  typed params + request context
-        ↓
-RxJS
-  loader Observable<Model>
-        ↓
-JSX / HTML renderers
-        ↓
-Hono Response
-```
+M06 also makes the sibling `file:../rxjs-router` bootstrap explicit. The router repository must sit beside `rxjs-fullstack`, and its production dependencies must be installed because Bun's browser bundler resolves runtime imports such as `rxjs` from the sibling package directory. CI now performs the same setup before running `bun run check`.
 
-### Typed URL construction
-
-Strong typing also works in the opposite direction when application code creates a URL.
-
-Each route exposes a typed `href()` function:
-
-```ts
-helloRoute.href({ name: 'Erik Meijer' });
-```
-
-which produces:
-
-```text
-/hello/Erik%20Meijer
-```
-
-TypeScript rejects missing or unrelated parameters:
-
-```ts
-helloRoute.href({});          // compile-time error
-helloRoute.href({ id: 'Erik' }); // compile-time error
-```
-
-This means the literal path drives both sides of routing:
-
-```text
-                  '/hello/:name'
-                         │
-              ┌──────────┴──────────┐
-              ▼                     ▼
-       incoming request       outgoing URL
-              │                     │
-              ▼                     ▼
-     params.name: string    href({ name: string })
-              │
-              ▼
-       Observable<Model>
-```
-
-### Current server registration
-
-With M05, `src/server/app.tsx` becomes a thin server composition point rather than the place where each page's RxJS/SSR pipeline is manually assembled:
-
-```ts
-export const app = new Hono();
-
-app.get('/health', (context) => context.json({ ok: true }));
-
-registerPageRoute(app, homeRoute);
-registerPageRoute(app, helloRoute);
-```
-
-The current dynamic proof route is:
-
-```text
-/hello/:name
-```
-
-Its inferred `params.name` flows into the loader model, the JSX view, the generated HTML, and the document title.
-
-The core M05 implementation lives in:
-
-- `src/router/route.ts` — route types, path-param inference, registration, and typed URL construction,
-- `src/examples/routes.tsx` — typed home and dynamic route definitions,
-- `src/server/app.tsx` — Hono composition and route registration,
-- `scripts/verify.tsx` — compile-time and runtime verification.
-
-The verification includes both runtime SSR checks and compile-time assertions using `@ts-expect-error`, ensuring that missing or incorrectly named route parameters really are rejected by TypeScript.
-
-## What M01–M05 establish
+## What M01–M06 establish
 
 Together these milestones establish the minimum architectural skeleton of `rxjs-fullstack`:
 
@@ -354,7 +258,8 @@ M01  JSX is a typed description of a view.
 M02  Browser execution is owned by RxJS Subscriptions.
 M03  Server rendering is a pure step inside an RxJS dataflow.
 M04  HTTP and runtime concerns remain thin adapters around that dataflow.
-M05  Routes are declared once and become strongly typed RxJS page pipelines.
+M05  Routing plus Query/Cache form reusable RxJS application infrastructure.
+M06  Page route modules are discovered and assembled without central manual registration.
 ```
 
 The architectural progression is now:
@@ -366,14 +271,16 @@ framework ViewChild
       ↓
 RxJS browser bindings / pure SSR renderer
       ↓
-strongly typed RxJS routes
+file-discovered, strongly typed rxjs-router route tree
+      ↓
+Query/Cache + application dataflows
       ↓
 Hono HTTP boundary
       ↓
 Bun runtime
 ```
 
-The first five milestones therefore demonstrate the project's central rule: **RxJS is the application machine; the surrounding technologies keep their existing jobs.**
+The first six milestones therefore demonstrate the project's central rule: **RxJS is the application machine; the surrounding technologies keep their existing jobs.**
 
 ## Development collaboration
 
@@ -385,20 +292,13 @@ The current documented ChatGPT model is **GPT-5.6 Sol**. Earlier project work re
 
 See [`CONTRIBUTORS.md`](./CONTRIBUTORS.md) for the project contributor list.
 
-### M05 — rxjs-router integration
-
-Route definitions live in `src/routes.tsx` and are shared by the server and the
-browser. The server uses `resolveRequest()` before passing a resolved JSX view to
-the pure HTML renderer. The browser uses `createBrowserHistory()` and
-`router.state$` as the live application view source for the DOM renderer.
-
-Route modules live under `src/routes/`. Each page module exports a route object,
-and `src/routes.tsx` is the manual barrel that assembles the route tree. This
-keeps route files small today and leaves room for a later file-route generator.
-
 ## Run
 
+The sibling router must be available beside this repository because the current package dependency is `file:../rxjs-router`:
+
 ```sh
+git clone https://github.com/hansschenker/rxjs-router ../rxjs-router
+(cd ../rxjs-router && bun install --production)
 bun install
 bun run check
 bun run dev
@@ -411,11 +311,15 @@ The current server routes include:
 ```text
 GET /health
 GET /
+GET /about
+GET /counter
+GET /todos
 GET /hello/:name
+GET /api/todos
 ```
 
-For example, open `http://localhost:3000/hello/Erik` to exercise the M05 dynamic typed SSR route.
+For example, open `http://localhost:3000/about` to exercise M06 route discovery, or `http://localhost:3000/hello/Erik` to exercise the earlier typed dynamic route proof.
 
 ## Architectural rule
 
-The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, Hono is HTTP, and Bun is a runtime rather than framework semantics.
+The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, `rxjs-router` owns routing semantics, Hono is HTTP, and Bun is a runtime rather than framework semantics.

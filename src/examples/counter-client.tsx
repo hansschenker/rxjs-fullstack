@@ -3,7 +3,7 @@ import { createBrowserHistory, createRouter } from 'rxjs-router';
 
 import { Fragment, jsx, type ViewChild } from '../jsx/runtime';
 import { mount } from '../render/dom';
-import { routes, type PageData } from '../routes';
+import { routes, type AppRoutes, type PageData } from '../routes';
 
 const root = document.querySelector('#app');
 
@@ -11,13 +11,15 @@ if (!(root instanceof Element)) {
   throw new Error('Expected #app mount element.');
 }
 
-const router = createRouter({
+const router = createRouter<AppRoutes>({
   routes,
   history: createBrowserHistory(),
 });
 
+type AppRouterState = typeof router.state;
+
 const app$ = router.state$.pipe(
-  map((state): ViewChild => {
+  map<AppRouterState, ViewChild>((state) => {
     if (state.status === 'pending') {
       return <main><p>Loading...</p></main>;
     }

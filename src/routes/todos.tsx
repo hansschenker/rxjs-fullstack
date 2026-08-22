@@ -27,3 +27,5 @@ export const todosRoute = createChildRoute<typeof rootBaseRoute>()({
     ),
   }),
 });
+
+export default todosRoute;

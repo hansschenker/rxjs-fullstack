@@ -27,3 +27,5 @@ export const counterRoute = createChildRoute<typeof rootBaseRoute>()({
     ),
   }),
 });
+
+export default counterRoute;
