@@ -6,295 +6,315 @@
 
 `rxjs-fullstack` is an experiment in a minimal fullstack web framework whose application execution model is RxJS.
 
-The framework is deliberately small. Existing web-community technologies keep their own responsibilities:
+The framework deliberately leaves existing technologies in charge of the jobs they already solve:
 
 - **TypeScript** — language, strong typing, and JSX compilation.
-- **RxJS 7** — lazy dataflows, state, effects, cancellation, sharing, and query caching.
-- **TypeScript JSX** — React-like component syntax without React.
+- **RxJS 7** — lazy dataflows, state, effects, cancellation, sharing, and Query/Cache.
+- **TypeScript JSX** — view syntax without React.
+- **rxjs-router** — strongly typed route matching, navigation, request resolution, and route data.
 - **Hono** — Web-API HTTP layer.
-- **Bun** — reference runtime for the first implementation.
+- **Bun** — reference runtime and build tool.
 
-The framework is growing toward file-based routing, SSR, SSG, and Query/Cache while keeping routing and route data resolution in the sibling `rxjs-router` package.
+The central rule is: **RxJS is the application machine; the surrounding technologies remain thin, explicit boundaries.**
 
-## First vertical slice: M01–M04
-
-The first vertical slice establishes one complete path through the stack:
+## Milestone status
 
 ```text
-TypeScript JSX
-    ↓
-framework ViewChild representation
-    ↓
-client DOM renderer or server HTML renderer
-    ↓
-RxJS request dataflow
-    ↓
-Hono HTTP response
-    ↓
-Bun runtime
+M01  TypeScript JSX runtime                         ✅
+M02  RxJS DOM bindings                             ✅
+M03  Pure HTML renderer + basic SSR               ✅
+M04  Hono + Bun server                             ✅
+M05  Strongly typed routing + Query/Cache         ✅
+M06  File-based route discovery                   ✅
+M07  Forms + RxJS server actions                  ✅
 ```
 
-The important architectural result is not only that the pieces work together, but that their responsibilities remain separate. JSX describes the view, RxJS owns temporal execution and state, renderers translate the view, Hono owns HTTP, and Bun only hosts the application.
+## M01 — TypeScript JSX runtime
 
-### M01 — TypeScript JSX runtime
+M01 establishes a framework-owned view representation without React.
 
-M01 establishes the framework's view language without introducing React or another component runtime.
+TypeScript compiles TSX directly to the framework's `jsx()` function and `Fragment` value. JSX therefore produces `ViewChild` values rather than DOM nodes or React elements.
 
-TypeScript is configured to compile TSX directly to the framework's own `jsx()` function and `Fragment` value. A JSX expression therefore becomes a small framework-owned `ViewChild` representation rather than a React element.
+The runtime supports primitives, intrinsic elements, fragments, function components, nested children, and RxJS Observables as live view values. It does not render, subscribe, create DOM, or own lifecycle.
 
-The runtime defines the values that can flow through the view layer:
+The implementation lives in `src/jsx/runtime.ts`.
 
-- primitive values such as strings and numbers,
-- intrinsic HTML elements,
-- fragments,
-- function components,
-- nested arrays of children,
-- and RxJS Observables as live child values.
+## M02 — RxJS DOM bindings
 
-Function components stay simple: they are functions from typed props plus children to a `ViewChild`. The JSX runtime normalizes nested children and creates plain tagged element/fragment nodes. It does not create DOM nodes, render HTML, subscribe to Observables, own component state, or introduce a hidden lifecycle.
+M02 interprets the same `ViewChild` representation in the browser.
 
-That separation is important because the same JSX representation can later be interpreted in different environments. M01 therefore gives the project one common view description that both the browser renderer and the server renderer can consume.
+`mount(view, container)` returns the RxJS `Subscription` that owns the mounted view's lifetime. Observable children and attributes are subscribed only when the view is mounted. Unsubscribing tears down event listeners, child subscriptions, live regions, and the mounted DOM.
 
-The core implementation lives in `src/jsx/runtime.ts`.
-
-### M02 — RxJS DOM bindings
-
-M02 connects the M01 view representation to the browser while keeping RxJS visible as the execution model.
-
-`mount(view, container)` renders a `ViewChild` tree into the DOM and returns an RxJS `Subscription`. That returned Subscription is the lifetime of the mounted view. Mounting starts the live bindings; unsubscribing tears them down.
-
-The DOM renderer handles the different view values directly:
-
-- strings and numbers become text nodes,
-- fragments and arrays render their children in place,
-- element nodes become real DOM elements,
-- ordinary props become DOM attributes,
-- Observable props become live attribute bindings,
-- and Observable children become live regions in the DOM.
-
-For an Observable child, the renderer inserts start/end marker comments and subscribes when the view is mounted. Every new emitted value replaces the currently rendered contents of that region. Before the replacement is rendered, the previous child-specific Subscription is unsubscribed, so subscriptions and event listeners belonging to the old emitted view are cancelled rather than left alive.
-
-DOM events travel in the opposite direction through RxJS `Observer`s. JSX can declare:
+DOM events flow into RxJS through `Observer`s:
 
 ```tsx
-<button on={{ click: increment$ }}>...</button>
+<button on={{ click: click$ }}>...</button>
 ```
 
-where `increment$` can be a `Subject<MouseEvent>`. The renderer installs the DOM listener and forwards each event with `observer.next(event)`. The renderer does not decide what the click means; the application dataflow does.
+The renderer only forwards event packages. Application meaning remains in the RxJS pipeline.
 
-The counter example demonstrates that separation. Click events enter a `Subject`, then normal RxJS operators transform the stream into state with `map`, `scan`, `startWith`, and `shareReplay`. The resulting `count$` Observable is placed directly in JSX as a live child. The JSX/DOM layer only moves values between the DOM and the RxJS dataflow; the state machine remains explicit in the application pipeline.
+The implementation lives in `src/render/dom.ts`.
 
-Unsubscribing the Subscription returned by `mount()` removes event listeners, Observable child subscriptions, Observable attribute subscriptions, child-view lifetimes, and the mounted DOM. Cancellation therefore has one explicit owner.
+## M03 — Pure HTML renderer and SSR
 
-The core implementation lives in `src/render/dom.ts`, with the counter proof in `src/examples/counter.tsx` and `src/examples/counter-client.tsx`.
+M03 adds the server interpreter for the M01 view representation.
 
-### M03 — HTML renderer and basic SSR
+`renderToString()` is deliberately synchronous and pure. It renders already-resolved JSX values to HTML and **never subscribes to an Observable**. Observable children or attributes reaching the HTML renderer are rejected with a `TypeError`.
 
-M03 adds a second interpreter for the same M01 view representation: a pure synchronous HTML renderer for server-side rendering.
-
-`renderToString()` converts resolved JSX values into HTML. It handles primitives, arrays, fragments, normal elements, void elements, boolean attributes, `className` → `class`, and HTML escaping.
-
-The key SSR rule is deliberate: **the HTML renderer never subscribes to an Observable**.
-
-Observable children or Observable attributes are rejected with a `TypeError`. Server-side asynchronous work must therefore be resolved by the request's RxJS dataflow before the JSX value reaches `renderToString()`.
-
-This keeps the execution boundary explicit:
-
-```text
-HTTP request
-    ↓
-subscribe to cold RxJS route dataflow
-    ↓
-resolve server values
-    ↓
-map values into TypeScript JSX
-    ↓
-map JSX through pure renderToString()
-    ↓
-map body through renderDocument()
-    ↓
-HTML response
-```
-
-In the original M03–M04 vertical slice, the home-page request pipeline was built directly in the server module: `defer()` created a cold request dataflow, the resolved model was mapped through `HomePage`, then through `renderToString`, and finally through `renderDocument`. M05 keeps the same execution rule but moves this repeated route machinery behind the routing abstraction.
-
-Because rendering is just a pure function inside the RxJS pipeline, the renderer does not hide execution, concurrency, cancellation, or subscription policy. RxJS remains responsible for how and when server data is produced; the HTML renderer is responsible only for turning an already resolved view into text.
-
-The verification script also checks this boundary: the SSR Observable has zero executions before subscription, executes once when consumed, and Observable children are rejected if they reach the HTML renderer unresolved.
-
-The core implementation lives in `src/render/html.ts`.
-
-### M04 — Hono + Bun server
-
-M04 completes the first vertical slice by connecting the RxJS SSR pipeline to an HTTP server.
-
-Hono owns HTTP routing. The application exposes a health endpoint and SSR page routes. In the first vertical slice, the root route directly consumed the cold home-page dataflow with `firstValueFrom()`. This established the explicit boundary where an HTTP request asks an RxJS dataflow for the response value.
-
-M05 later centralizes route matching and data resolution through `rxjs-router`, so route-specific code no longer repeats HTTP integration machinery.
-
-The server application and runtime adapter remain intentionally separate:
-
-- `src/server/app.tsx` defines the Web-API Hono application and registers framework routes.
-- `src/server/bun.ts` is only the Bun adapter: it supplies port `3000` and forwards Bun's `fetch` handling to `app.fetch`.
-
-That split means Bun is not framework semantics. A later Node, Deno, Cloudflare, or other Web-API-compatible adapter can host the same Hono application without changing the JSX runtime, RxJS execution model, HTML renderer, or route definitions.
-
-M04 therefore proves the end-to-end server path:
+Server asynchronous work must therefore resolve before rendering:
 
 ```text
 request
-  → Hono route
-  → RxJS/router data resolution
-  → typed model
-  → JSX
-  → HTML
-  → Hono Response
-  → Bun
+  ↓
+route/request dataflow
+  ↓
+resolved model
+  ↓
+JSX
+  ↓
+renderToString()
+  ↓
+HTML
 ```
 
-The verification script calls the Hono application directly, checks the root SSR response, checks the health endpoint, and confirms that the full M01–M04 path works without requiring a separately running HTTP server.
+This keeps execution, cancellation, and subscription policy in RxJS rather than hiding them in rendering.
+
+The implementation lives in `src/render/html.ts`.
+
+## M04 — Hono + Bun server
+
+M04 completes the first full server path.
+
+Hono owns HTTP. Bun is only the reference runtime adapter. `src/server/app.tsx` defines the Web-API application, while `src/server/bun.ts` supplies the Bun `fetch` adapter and port.
+
+The server path is:
+
+```text
+HTTP request
+  ↓
+Hono
+  ↓
+RxJS/router data resolution
+  ↓
+resolved page data
+  ↓
+JSX + pure HTML rendering
+  ↓
+Response
+```
+
+No framework semantics depend on Bun-specific APIs outside the runtime adapter.
 
 ## M05 — Strongly typed routing and Query/Cache
 
-M05 turns the first server slice into reusable framework infrastructure while keeping RxJS visible as the execution model.
+M05 adds reusable application infrastructure.
 
-The repository contains two complementary routing pieces developed during M05:
+The running application uses the sibling `rxjs-router` package on both server and browser:
 
-- the in-repo typed route experiment in `src/router/`, including path-literal-derived params and typed `href(...)`,
-- the running application integration with the sibling `rxjs-router` package, used by both server and browser routing.
+- server: `resolveRequest({ routes, request })`,
+- browser: `createRouter({ routes, history })`,
+- browser view state: `router.state$`.
 
-The central rule remains: **declare route behavior explicitly and derive as much TypeScript information as possible from that declaration.**
+The repository also retains the earlier typed-route experiment in `src/router/`, including path-literal-derived params and typed `href(...)` generation as a proof of the routing type model.
 
-A literal route path such as:
-
-```ts
-definePageRoute('/hello/:name')
-```
-
-automatically gives the loader a strongly typed parameter object equivalent to:
-
-```ts
-{
-  readonly name: string;
-}
-```
-
-There is no separately maintained `Params` interface and therefore no second source of truth that can drift away from the route path.
-
-The same works for multiple parameters. For example:
-
-```ts
-type Params = RouteParams<'/teams/:teamId/users/:userId'>;
-```
-
-produces the effective type:
-
-```ts
-{
-  readonly teamId: string;
-  readonly userId: string;
-}
-```
-
-M05 also integrates the framework-owned Query/Cache layer in `src/query/`. The Todo vertical slice uses query definitions under `src/queries/`, browser query streams, mutation streams, invalidation, and a Hono `/api/todos` endpoint. Query behavior remains RxJS dataflow rather than a separate component lifecycle.
-
-### rxjs-router integration
-
-Route definitions are shared by the server and browser. The server uses `resolveRequest()` before passing resolved JSX to the pure HTML renderer. The browser uses `createBrowserHistory()` and `router.state$` as the live application view source for the DOM renderer.
-
-Route modules live under `src/routes/`. Through M05, `src/routes.tsx` manually imported each page route and assembled them under the root route. That manual barrel established the correct module boundary but still required central registration whenever a page file was added.
+M05 also internalizes the Query/Cache layer under `src/query/`. Queries are Observables, mutations expose cold `mutate$()` streams, invalidation/refetching stays explicit, and the Todos vertical slice proves browser Query/Cache against a Hono API.
 
 ## M06 — File-based route discovery
 
-M06 removes that manual registration step without moving routing semantics out of `rxjs-router`.
+M06 removes central manual registration of page route modules.
 
-The convention is deliberately small:
+Page modules live in:
 
-- page route modules live in `src/routes/*.tsx`,
-- every page module default-exports its `rxjs-router` route object,
-- non-page support modules such as `root.ts` and `types.ts` remain ordinary TypeScript files,
-- `scripts/generate-routes.ts` discovers the page modules and writes the complete typed route tree to `src/routes.generated.ts`,
-- `src/routes.tsx` becomes a stable public re-export rather than a hand-maintained page registry.
+```text
+src/routes/*.tsx
+```
 
-The flow is now:
+Each page module default-exports its `rxjs-router` route object. `scripts/generate-routes.ts` discovers the modules with `Bun.Glob`, sorts them deterministically, and writes the complete strongly typed root tree to `src/routes.generated.ts`.
 
 ```text
 src/routes/*.tsx
       ↓
 Bun.Glob discovery
       ↓
-sorted page imports
+sorted imports
       ↓
-generated createRoute({ children: [...] }) root tree
+generated createRoute({ children: [...] })
       ↓
 src/routes.generated.ts
       ↓
 src/routes.tsx public re-export
-      ↓
-server resolveRequest() / browser createRouter()
 ```
 
-Generating the root `createRoute()` call together with its inline `children: [...]` tuple is important for TypeScript: `rxjs-router` can preserve the exact const tuple and derive the application route-state types across the whole tree.
+The generator only discovers and assembles modules. `rxjs-router` still owns route semantics: matching, params, loaders, navigation, redirects, cancellation, and request resolution.
 
-The generator does **not** implement route matching, data loading, cancellation, navigation, or URL semantics. Those responsibilities stay in `rxjs-router`. It only performs build-time discovery and assembly—the coordination that the fullstack framework needs around the router.
+Generating the root `createRoute()` call with its inline `children` tuple preserves TypeScript's exact route-tree inference.
 
-The generated file is committed so TypeScript, editors, and consumers always see a concrete route tree, but it is regenerated before development, startup, typechecking, verification, and the full `check` command. Route order is deterministic because discovered filenames are sorted before generation.
+`/about` is the M06 proof route: it participates in SSR without being manually imported into a central route registry.
 
-A new `src/routes/about.tsx` page is the M06 proof. It is never imported by hand in `src/routes.tsx`; the generator discovers it, and `/about` participates in the same SSR route tree as `/`, `/counter`, and `/todos`.
+## M07 — Forms + RxJS server actions
 
-The verification script checks both sides of the invariant:
+M07 moves the project from structural infrastructure into fullstack effects.
 
-- `generatedRouteFiles` contains `about.tsx`, proving discovery,
-- `GET /about` returns the SSR page, proving that the generated route object actually reached `rxjs-router` and the server pipeline.
+The Todos feature now uses a real HTML form as an RxJS event source:
 
-M06 also makes the sibling `file:../rxjs-router` bootstrap explicit. The router repository must sit beside `rxjs-fullstack`, and its production dependencies must be installed because Bun's browser bundler resolves runtime imports such as `rxjs` from the sibling package directory. CI now performs the same setup before running `bun run check`.
+```tsx
+<form on={{ submit: submit$ }}>
+  <input name="title" />
+  <button type="submit">Add</button>
+</form>
+```
 
-## What M01–M06 establish
+There is no `document.querySelector()` mutation workflow and no click-specific business path. The `SubmitEvent` itself carries the form boundary; `FormData` is read from the submitting form and converted into the typed domain input.
 
-Together these milestones establish the minimum architectural skeleton of `rxjs-fullstack`:
+### Submit policy is visible
+
+The application pipeline uses:
+
+```text
+submit$
+  ↓
+prevent browser navigation
+  ↓
+exhaustMap
+  ↓
+invoke server action
+  ↓
+invalidate todos query
+  ↓
+reset form / render status
+```
+
+`exhaustMap` is an intentional policy: **ignore new submissions while one save is in flight**.
+
+The operator is not renamed behind a domain wrapper. The mechanism remains visible, while domain meaning lives in ordinary functions such as `createTodoInput()`.
+
+### Shared typed action contract
+
+A server action begins as a small shared typed reference:
+
+```ts
+export const createTodoAction = defineServerAction<CreateTodoInput, Todo>(
+  'todos.create',
+);
+```
+
+The reference contains identity plus TypeScript input/output information. It does not contain the server handler, so client bundles do not import server implementation code.
+
+The shared action primitives live in `src/actions/`.
+
+### Client execution is an Observable
+
+`invokeServerAction$(action, input)` returns a cold RxJS Observable implemented with `fromFetch`.
+
+Nothing executes until something subscribes to the action stream. Because `fromFetch` owns an `AbortController`, unsubscribing the action stream aborts the HTTP request. The mounted view's `Subscription` therefore remains the owner of browser action lifetime.
+
+```text
+subscription starts
+      ↓
+POST /api/actions/<action-id>
+      ↓
+response emits
+      ↓
+complete
+
+unsubscribe before completion
+      ↓
+fetch aborts
+```
+
+M07 does not hide concurrency policy inside the action transport. The caller chooses `exhaustMap`, `switchMap`, `concatMap`, or `mergeMap` according to the desired application behavior.
+
+### Server execution stays lazy
+
+Hono registration is handled by `registerServerAction()` in `src/server/action.ts`.
+
+The HTTP adapter parses the JSON envelope, then creates the server execution with `executeServerAction$()`. Input parsing and handler invocation are wrapped in `defer()`, so the server-side action remains a lazy RxJS dataflow until the HTTP boundary consumes it.
+
+```text
+HTTP POST
+  ↓
+Hono action route
+  ↓
+raw JSON
+  ↓
+subscribe to executeServerAction$()
+  ↓
+typed input parser
+  ↓
+Observable<Todo> handler
+  ↓
+JSON response
+```
+
+The Todo handler lifts the ordinary in-memory `addTodo()` operation into the server action dataflow. Hono does not know Todo business rules, and the action framework does not know what a Todo contains.
+
+The old ad-hoc mutation route:
+
+```text
+POST /api/todos
+```
+
+has been removed. Todo creation now goes through:
+
+```text
+POST /api/actions/todos.create
+```
+
+The read side remains:
+
+```text
+GET /api/todos
+```
+
+After a successful action, the browser explicitly invalidates the Todos Query/Cache entry, which refetches the list through the existing query path.
+
+### M07 verification
+
+`scripts/verify.tsx` now checks that:
+
+- server-action parsing is lazy before subscription,
+- server-action handler execution is lazy before subscription,
+- one subscription executes the handler once,
+- valid Todo action input returns HTTP `201`,
+- created data is visible through `GET /api/todos`,
+- invalid action input returns HTTP `400`,
+- the old `POST /api/todos` mutation path is gone.
+
+The browser build typechecks the form event stream, action client, and Query/Cache invalidation pipeline.
+
+## What M01–M07 establish
 
 ```text
 M01  JSX is a typed description of a view.
 M02  Browser execution is owned by RxJS Subscriptions.
 M03  Server rendering is a pure step inside an RxJS dataflow.
-M04  HTTP and runtime concerns remain thin adapters around that dataflow.
-M05  Routing plus Query/Cache form reusable RxJS application infrastructure.
-M06  Page route modules are discovered and assembled without central manual registration.
+M04  HTTP and runtime remain thin boundaries.
+M05  Routing and Query/Cache provide application infrastructure.
+M06  Route modules are discovered without central registration.
+M07  Forms drive typed, lazy, cancellable RxJS server actions.
 ```
 
-The architectural progression is now:
+The current architecture is:
 
 ```text
 TypeScript JSX
       ↓
 framework ViewChild
       ↓
-RxJS browser bindings / pure SSR renderer
+RxJS DOM bindings / pure SSR renderer
       ↓
-file-discovered, strongly typed rxjs-router route tree
+file-discovered rxjs-router tree
       ↓
-Query/Cache + application dataflows
+Query/Cache + form/action dataflows
       ↓
 Hono HTTP boundary
       ↓
 Bun runtime
 ```
 
-The first six milestones therefore demonstrate the project's central rule: **RxJS is the application machine; the surrounding technologies keep their existing jobs.**
-
-## Development collaboration
-
-`rxjs-fullstack` is being developed collaboratively by **hansschenker** and **ChatGPT by OpenAI**.
-
-ChatGPT has been the primary AI implementation collaborator for the project, contributing substantially to architecture refinement, TypeScript and RxJS implementation, tests, documentation, and repository workflow while the project direction and architectural goals are defined and reviewed by hansschenker.
-
-The current documented ChatGPT model is **GPT-5.6 Sol**. Earlier project work remains attributed to ChatGPT unless an exact model was explicitly recorded at the time; this avoids retroactively assigning a model version that was not independently recorded.
-
-See [`CONTRIBUTORS.md`](./CONTRIBUTORS.md) for the project contributor list.
-
 ## Run
 
-The sibling router must be available beside this repository because the current package dependency is `file:../rxjs-router`:
+The current `rxjs-router` dependency is a sibling `file:` dependency, so the repositories must sit beside one another:
 
 ```sh
 git clone https://github.com/hansschenker/rxjs-router ../rxjs-router
@@ -306,20 +326,28 @@ bun run dev
 
 Then open `http://localhost:3000`.
 
-The current server routes include:
+Current application endpoints include:
 
 ```text
-GET /health
-GET /
-GET /about
-GET /counter
-GET /todos
-GET /hello/:name
-GET /api/todos
+GET  /health
+GET  /
+GET  /about
+GET  /counter
+GET  /todos
+GET  /api/todos
+POST /api/actions/todos.create
 ```
 
-For example, open `http://localhost:3000/about` to exercise M06 route discovery, or `http://localhost:3000/hello/Erik` to exercise the earlier typed dynamic route proof.
+The older `/hello/:name` code remains in `src/examples/routes.tsx` as a typed-routing proof for path-derived params and `href()` generation; it is not part of the generated M06/M07 application route tree.
+
+## Development collaboration
+
+`rxjs-fullstack` is being developed collaboratively by **hansschenker** and **ChatGPT by OpenAI**.
+
+ChatGPT has been the primary AI implementation collaborator for architecture refinement, TypeScript/RxJS implementation, verification, documentation, and repository workflow, while project direction and architectural goals are defined and reviewed by hansschenker.
+
+See [`CONTRIBUTORS.md`](./CONTRIBUTORS.md) for the project contributor list.
 
 ## Architectural rule
 
-The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, `rxjs-router` owns routing semantics, Hono is HTTP, and Bun is a runtime rather than framework semantics.
+The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, `rxjs-router` owns routing semantics, Hono owns HTTP, and Bun is a runtime/build adapter rather than framework semantics.

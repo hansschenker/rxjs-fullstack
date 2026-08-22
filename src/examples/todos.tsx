@@ -1,28 +1,47 @@
 import {
   Subject,
   catchError,
+  concatMap,
   exhaustMap,
-  filter,
   map,
   of,
   startWith,
+  tap,
 } from 'rxjs';
 import { QueryClient } from '../query';
 
+import { createTodoInput, type CreateTodoInput } from '../domain/todos';
 import { Fragment, jsx, type ViewChild } from '../jsx/runtime';
-import { createTodo, todosQuery, type Todo } from '../queries/todos';
+import { createTodo$, todosQuery, type Todo } from '../queries/todos';
 
 export const queryClient = new QueryClient();
 
-export const TodoApp = () => {
-  const addClick$ = new Subject<MouseEvent>();
+interface TodoSubmission {
+  readonly form: HTMLFormElement;
+  readonly input: CreateTodoInput;
+}
 
-  const addTodo = queryClient.mutation<Todo, Error, string>({
-    mutationFn: createTodo,
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: todosQuery.queryKey });
-    },
-  });
+const preventFormNavigation = (event: SubmitEvent): void => {
+  event.preventDefault();
+};
+
+const readTodoSubmission = (event: SubmitEvent): TodoSubmission | undefined => {
+  const form = event.currentTarget;
+  if (!(form instanceof HTMLFormElement)) {
+    return undefined;
+  }
+
+  const title = new FormData(form).get('title');
+  if (typeof title !== 'string') {
+    return undefined;
+  }
+
+  const input = createTodoInput(title);
+  return input ? { form, input } : undefined;
+};
+
+export const TodoApp = () => {
+  const submit$ = new Subject<SubmitEvent>();
 
   const list$ = queryClient.query$(todosQuery).pipe(
     map((result): ViewChild => {
@@ -37,7 +56,7 @@ export const TodoApp = () => {
       return (
         <ul>
           {result.data?.map(
-            (todo): ViewChild => (
+            (todo: Todo): ViewChild => (
               <li>
                 {todo.done ? '✓ ' : '○ '}
                 {todo.title}
@@ -49,20 +68,23 @@ export const TodoApp = () => {
     }),
   );
 
-  // Declarative mutation wiring: the status line observes the click stream,
-  // so subscribing the view is what drives the mutation. exhaustMap ignores
-  // clicks while a save is in flight.
-  const status$ = addClick$.pipe(
-    map(() => document.querySelector<HTMLInputElement>('#new-todo')),
-    filter(
-      (input): input is HTMLInputElement =>
-        input !== null && input.value.trim().length > 0,
-    ),
-    exhaustMap((input) => {
-      const title = input.value.trim();
-      input.value = '';
-      return addTodo.mutate$(title).pipe(
-        map(() => ''),
+  // The form is the event source. exhaustMap is the submit policy: while one
+  // server action is in flight, later submits are ignored. Unsubscribing the
+  // mounted view tears down this chain; fromFetch then aborts the request.
+  const status$ = submit$.pipe(
+    tap(preventFormNavigation),
+    exhaustMap((event) => {
+      const submission = readTodoSubmission(event);
+      if (!submission) {
+        return of('Enter a todo.');
+      }
+
+      return createTodo$(submission.input).pipe(
+        concatMap(() =>
+          queryClient.invalidateQueries({ queryKey: todosQuery.queryKey }),
+        ),
+        tap(() => submission.form.reset()),
+        map(() => 'Saved.'),
         startWith('Saving...'),
         catchError(() => of('Failed to save.')),
       );
@@ -74,14 +96,18 @@ export const TodoApp = () => {
     <section>
       <h2>Todos</h2>
       <p>
-        Fetched with rxjs-query: cached, deduped, and refetched after every
-        mutation.
+        Fetched through Query/Cache and created through an RxJS server action.
       </p>
       {list$}
-      <input id="new-todo" type="text" placeholder="What needs doing?" />
-      <button type="button" on={{ click: addClick$ }}>
-        Add
-      </button>
+      <form on={{ submit: submit$ }}>
+        <input
+          name="title"
+          type="text"
+          placeholder="What needs doing?"
+          required
+        />
+        <button type="submit">Add</button>
+      </form>
       <p>{status$}</p>
     </section>
   );

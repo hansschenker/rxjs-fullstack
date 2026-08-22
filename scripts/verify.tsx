@@ -5,6 +5,7 @@ import { Fragment, jsx } from '../src/jsx/runtime';
 import { generatedRouteFiles } from '../src/routes.generated';
 import { renderToString } from '../src/render/html';
 import type { RouteParams } from '../src/router/route';
+import { executeServerAction$ } from '../src/server/action';
 import { app } from '../src/server/app';
 
 const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
@@ -50,16 +51,16 @@ assert(
 );
 
 const response = await app.request('/');
-assertEqual(response.status, 200, 'M04-M06: root route should return HTTP 200.');
+assertEqual(response.status, 200, 'M04-M07: root route should return HTTP 200.');
 const body = await response.text();
 assert(body.includes('<h1>RxJS Fullstack</h1>'), 'M04: root route should return SSR HTML.');
 assert(
-  body.includes('M01-M06 vertical slice with file-based route discovery'),
-  'M06: SSR route should render generated route-tree data.',
+  body.includes('M01-M07 vertical slice with forms and server actions'),
+  'M07: SSR route should report the current milestone.',
 );
 
 const counterResponse = await app.request('/counter');
-assertEqual(counterResponse.status, 200, 'M05/M06: counter route should return HTTP 200.');
+assertEqual(counterResponse.status, 200, 'M05-M07: counter route should return HTTP 200.');
 const counterBody = await counterResponse.text();
 assert(counterBody.includes('<h1>RxJS Fullstack Counter</h1>'), 'M05: router should render nested counter route.');
 
@@ -113,7 +114,7 @@ try {
 assert(hrefWrongParamRejected, 'M05: href should throw for unrelated parameter names.');
 
 const todosResponse = await app.request('/todos');
-assertEqual(todosResponse.status, 200, 'M05/M06: todos route should return HTTP 200.');
+assertEqual(todosResponse.status, 200, 'M05-M07: todos route should return HTTP 200.');
 const todosBody = await todosResponse.text();
 assert(todosBody.includes('<h1>RxJS Fullstack Todos</h1>'), 'M05: todos route should render SSR HTML.');
 
@@ -122,4 +123,68 @@ assertEqual(todosApi.status, 200, 'M05: todos API should return HTTP 200.');
 const todosJson = (await todosApi.json()) as ReadonlyArray<{ readonly id: number }>;
 assert(Array.isArray(todosJson) && todosJson.length > 0, 'M05: todos API should return seeded todos.');
 
-console.log('M01-M06 verification passed.');
+let actionParses = 0;
+let actionExecutions = 0;
+const actionRequest = new Request('http://localhost/api/actions/test', { method: 'POST' });
+const lazyAction$ = executeServerAction$(
+  {
+    parse: (value) => {
+      actionParses += 1;
+      return value as { readonly value: number };
+    },
+    run: ({ value }) =>
+      defer(() => {
+        actionExecutions += 1;
+        return of(value * 2);
+      }),
+  },
+  { value: 21 },
+  { request: actionRequest, signal: actionRequest.signal },
+);
+assertEqual(actionParses, 0, 'M07: server action input parsing must remain lazy before subscription.');
+assertEqual(actionExecutions, 0, 'M07: server action handler must remain lazy before subscription.');
+assertEqual(await firstValueFrom(lazyAction$), 42, 'M07: server action should emit its typed result.');
+assertEqual(actionParses, 1, 'M07: server action input should be parsed once per subscription.');
+assertEqual(actionExecutions, 1, 'M07: server action handler should execute once per subscription.');
+
+const createTodoActionResponse = await app.request('/api/actions/todos.create', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ title: 'Prove M07 server actions' }),
+});
+assertEqual(createTodoActionResponse.status, 201, 'M07: create-todo server action should return HTTP 201.');
+const createdTodo = (await createTodoActionResponse.json()) as {
+  readonly id: number;
+  readonly title: string;
+};
+assertEqual(createdTodo.title, 'Prove M07 server actions', 'M07: server action should return the created Todo.');
+
+const todosAfterAction = await app.request('/api/todos');
+const todosAfterActionJson = (await todosAfterAction.json()) as ReadonlyArray<{
+  readonly id: number;
+  readonly title: string;
+}>;
+assert(
+  todosAfterActionJson.some((todo) => todo.id === createdTodo.id),
+  'M07: server action mutation should be visible through the todos query endpoint.',
+);
+
+const invalidActionResponse = await app.request('/api/actions/todos.create', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ title: '   ' }),
+});
+assertEqual(invalidActionResponse.status, 400, 'M07: invalid server-action input should return HTTP 400.');
+
+const legacyMutationResponse = await app.request('/api/todos', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ title: 'legacy mutation path' }),
+});
+assertEqual(
+  legacyMutationResponse.status,
+  404,
+  'M07: Todo creation should no longer use the ad-hoc POST /api/todos endpoint.',
+);
+
+console.log('M01-M07 verification passed.');
