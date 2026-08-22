@@ -23,6 +23,7 @@ export interface WriteDocumentStreamOptions {
   readonly body$: Observable<string>;
   readonly jsonScripts?: () => readonly HtmlJsonScript[];
   readonly errorBody?: string;
+  readonly onError?: (error: unknown) => void;
 }
 
 const DEFAULT_STREAM_ERROR_BODY =
@@ -35,6 +36,7 @@ export const writeDocumentStream = async ({
   body$,
   jsonScripts = () => [],
   errorBody = DEFAULT_STREAM_ERROR_BODY,
+  onError = () => undefined,
 }: WriteDocumentStreamOptions): Promise<void> => {
   const encoder = new TextEncoder();
   const abort$ = new Subject<void>();
@@ -70,10 +72,18 @@ export const writeDocumentStream = async ({
     if (!aborted) {
       await write(renderDocumentSuffix({ jsonScripts: jsonScripts() }));
     }
-  } catch {
-    if (!aborted) {
+  } catch (error) {
+    onError(error);
+    if (aborted) {
+      return;
+    }
+
+    try {
       await write(errorBody);
       await write(renderDocumentSuffix({ jsonScripts: jsonScripts() }));
+    } catch (fallbackError) {
+      onError(fallbackError);
+      throw fallbackError;
     }
   } finally {
     abort$.complete();
