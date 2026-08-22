@@ -31,6 +31,19 @@ interface MigrationRow {
   readonly version: number;
 }
 
+const preserveProcessExitCode = async <T>(
+  operation: () => Promise<T>,
+): Promise<T> => {
+  const previousExitCode = process.exitCode;
+  try {
+    return await operation();
+  } finally {
+    // PGlite's Emscripten runtime uses process.exitCode internally. Pin the
+    // host process verdict back to the value owned by the surrounding app.
+    process.exitCode = previousExitCode ?? 0;
+  }
+};
+
 const todoFromRow = (row: TodoRow): Todo => ({
   id: row.id,
   title: row.title,
@@ -90,7 +103,7 @@ export const createPgliteTodoRepository = async ({
   dataDir = 'memory://',
   seed = true,
 }: PgliteTodoRepositoryOptions = {}): Promise<TodoRepository> => {
-  const database = await PGlite.create(dataDir);
+  const database = await preserveProcessExitCode(() => PGlite.create(dataDir));
   await applyMigrations(database);
 
   if (seed) {
@@ -126,6 +139,6 @@ export const createPgliteTodoRepository = async ({
         }
         return todoFromRow(row);
       }),
-    close: () => database.close(),
+    close: () => preserveProcessExitCode(() => database.close()),
   };
 };
