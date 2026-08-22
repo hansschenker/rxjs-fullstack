@@ -1,4 +1,5 @@
 import { defer, firstValueFrom, map, of } from 'rxjs';
+import { createRoute } from 'rxjs-router';
 
 import { helloRoute } from '../src/examples/routes';
 import { Fragment, jsx } from '../src/jsx/runtime';
@@ -9,11 +10,16 @@ import {
   hydrateQueryClientFromDocument,
   queryOptions,
 } from '../src/query';
-import { generatedRouteFiles } from '../src/routes.generated';
 import { renderToString } from '../src/render/html';
 import type { RouteParams } from '../src/router/route';
+import { generatedRouteFiles, routes } from '../src/routes.generated';
 import { executeServerAction$ } from '../src/server/action';
 import { app } from '../src/server/app';
+import {
+  collectStaticPathnames,
+  renderStaticPage,
+  staticOutputPath,
+} from '../src/ssg/static';
 
 const assert: (condition: unknown, message: string) => asserts condition = (condition, message) => {
   if (!condition) {
@@ -58,16 +64,16 @@ assert(
 );
 
 const response = await app.request('/');
-assertEqual(response.status, 200, 'M04-M08: root route should return HTTP 200.');
+assertEqual(response.status, 200, 'M04-M09: root route should return HTTP 200.');
 const body = await response.text();
 assert(body.includes('<h1>RxJS Fullstack</h1>'), 'M04: root route should return SSR HTML.');
 assert(
-  body.includes('M01-M08 vertical slice with SSR query continuity'),
-  'M08: SSR route should report the current milestone.',
+  body.includes('M01-M09 vertical slice with static site generation'),
+  'M09: SSR route should report the current milestone.',
 );
 
 const counterResponse = await app.request('/counter');
-assertEqual(counterResponse.status, 200, 'M05-M08: counter route should return HTTP 200.');
+assertEqual(counterResponse.status, 200, 'M05-M09: counter route should return HTTP 200.');
 const counterBody = await counterResponse.text();
 assert(counterBody.includes('<h1>RxJS Fullstack Counter</h1>'), 'M05: router should render nested counter route.');
 
@@ -119,7 +125,7 @@ try {
 assert(hrefWrongParamRejected, 'M05: href should throw for unrelated parameter names.');
 
 const todosResponse = await app.request('/todos');
-assertEqual(todosResponse.status, 200, 'M05-M08: todos route should return HTTP 200.');
+assertEqual(todosResponse.status, 200, 'M05-M09: todos route should return HTTP 200.');
 const todosBody = await todosResponse.text();
 assert(todosBody.includes('<h1>RxJS Fullstack Todos</h1>'), 'M05: todos route should render SSR HTML.');
 assert(
@@ -133,6 +139,64 @@ assert(
 assert(
   todosBody.includes(`id="${QUERY_STATE_SCRIPT_ID}"`),
   'M08: SSR HTML should carry dehydrated Query/Cache state for the browser.',
+);
+
+const staticPathnames = collectStaticPathnames(routes);
+assertEqual(
+  JSON.stringify(staticPathnames),
+  JSON.stringify(['/', '/about', '/counter', '/todos']),
+  'M09: static path discovery should derive the current concrete application routes from the generated tree.',
+);
+assertEqual(
+  staticOutputPath('/'),
+  'dist/static/index.html',
+  'M09: root static output should map to dist/static/index.html.',
+);
+assertEqual(
+  staticOutputPath('/todos'),
+  'dist/static/todos/index.html',
+  'M09: nested static output should map to a directory index file.',
+);
+
+const dynamicRoutes = [
+  createRoute({
+    path: '/',
+    children: [createRoute({ path: 'posts/$slug' })],
+  }),
+] as const;
+assert(
+  !collectStaticPathnames(dynamicRoutes).includes('/posts/$slug'),
+  'M09: parameterized routes should be excluded until build-time params are supplied explicitly.',
+);
+
+const fetchFromApp = async (input: string, init?: RequestInit): Promise<Response> => {
+  const url = new URL(input, 'http://rxjs-fullstack.verify');
+  return app.request(`${url.pathname}${url.search}`, init);
+};
+
+const staticAbout = await renderStaticPage({
+  routes,
+  pathname: '/about',
+  fetch: fetchFromApp,
+});
+assertEqual(
+  staticAbout.html,
+  aboutBody,
+  'M09: build-time /about rendering should be byte-for-byte equivalent to request-time SSR.',
+);
+
+const staticTodos = await renderStaticPage({
+  routes,
+  pathname: '/todos',
+  fetch: fetchFromApp,
+});
+assert(
+  staticTodos.html.includes('Port TanStack Query to RxJS'),
+  'M09: build-time /todos rendering should reuse M08 Query/Cache prefetch.',
+);
+assert(
+  staticTodos.html.includes(`id="${QUERY_STATE_SCRIPT_ID}"`),
+  'M09: build-time /todos should preserve dehydrated Query/Cache state.',
 );
 
 const todosApi = await app.request('/api/todos');
@@ -248,4 +312,4 @@ assertEqual(
   'M07: Todo creation should no longer use the ad-hoc POST /api/todos endpoint.',
 );
 
-console.log('M01-M08 verification passed.');
+console.log('M01-M09 verification passed.');
