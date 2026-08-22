@@ -161,6 +161,7 @@ export class QueryStream<
     >,
   ): void {
     const prevQuery = this.#currentQuery;
+    const prevOptions = this.options;
 
     this.options = this.#client.defaultQueryOptions(options);
     this.#assertValidEnabled();
