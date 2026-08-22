@@ -9,6 +9,8 @@ import {
 import { routes } from '../src/routes';
 import { app } from '../src/server/app';
 
+const STREAM_VERIFY_TIMEOUT_MS = 5_000;
+
 const assert: (condition: unknown, message: string) => asserts condition = (
   condition,
   message,
@@ -30,6 +32,24 @@ const assertEqual = (
   }
 };
 
+const withDeadline = <T>(promise: Promise<T>, message: string): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const handle = setTimeout(
+      () => reject(new Error(message)),
+      STREAM_VERIFY_TIMEOUT_MS,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(handle);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(handle);
+        reject(error);
+      },
+    );
+  });
+
 const response = await app.request('/streaming');
 assertEqual(response.status, 200, 'M13: streaming route should return HTTP 200.');
 assert(
@@ -50,7 +70,10 @@ assert(response.body, 'M13: streaming SSR response should expose a ReadableStrea
 
 const reader = response.body.getReader();
 const decoder = new TextDecoder();
-const first = await reader.read();
+const first = await withDeadline(
+  reader.read(),
+  'M13: timed out waiting for the initial streaming shell chunk.',
+);
 assert(!first.done && first.value, 'M13: the response should emit an initial shell chunk.');
 const firstHtml = decoder.decode(first.value, { stream: true });
 assert(firstHtml.includes('<!doctype html>'), 'M13: first chunk should begin the HTML document.');
@@ -62,7 +85,10 @@ assert(
 
 let streamedHtml = firstHtml;
 for (;;) {
-  const next = await reader.read();
+  const next = await withDeadline(
+    reader.read(),
+    'M13: timed out while draining the progressive SSR response.',
+  );
   if (next.done) {
     streamedHtml += decoder.decode();
     break;
@@ -166,12 +192,17 @@ const cancellationWork = writeDocumentStream({
 });
 await subscribed;
 abortCallback?.();
-await cancellationWork;
+await withDeadline(
+  cancellationWork,
+  'M13: timed out waiting for aborted streaming work to tear down.',
+);
 assert(
   cancellationTeardown,
   'M13: aborting the HTTP stream should unsubscribe the RxJS body source.',
 );
 
+const sensitiveStreamError = new Error('sensitive stream failure');
+let observedStreamError: unknown;
 const errorChunks: Uint8Array[] = [];
 const errorSink: HtmlStreamSink = {
   onAbort: () => undefined,
@@ -183,9 +214,17 @@ await writeDocumentStream({
   sink: errorSink,
   title: 'Error proof',
   initialBody: '<p>shell</p>',
-  body$: throwError(() => new Error('sensitive stream failure')),
+  body$: throwError(() => sensitiveStreamError),
+  onError: (error) => {
+    observedStreamError = error;
+  },
 });
 const errorHtml = decodeChunks(errorChunks);
+assertEqual(
+  observedStreamError,
+  sensitiveStreamError,
+  'M13: the stream bridge should expose the original post-start failure to its error hook.',
+);
 assert(
   errorHtml.includes('data-rxjs-stream-error="true"'),
   'M13: a post-start stream error should become a generic in-band error fragment.',
