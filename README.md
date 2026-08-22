@@ -163,7 +163,9 @@ Generating the root `createRoute()` call with its inline `children` tuple preser
 
 M07 is the point where `rxjs-fullstack` moves from framework structure into a complete fullstack effect.
 
-Before M07, the Todos example could already fetch cached server data and perform a mutation, but the write path was still an application-specific HTTP workflow. M07 replaces that path with a reusable framework model:
+Before M07, the Todos example could already fetch cached server data and perform a mutation, but the write path was still an application-specific HTTP workflow: a button click triggered code that queried the DOM for an input element and posted directly to `POST /api/todos`.
+
+M07 replaces that path with a reusable framework model:
 
 ```text
 HTML form
@@ -193,24 +195,50 @@ The result is the first end-to-end proof that UI events, concurrency policy, net
 
 ### The form itself is the event source
 
-The Todos UI declares an ordinary HTML form whose `submit` event is forwarded to an RxJS `Subject<SubmitEvent>`:
+The Todos UI now declares an ordinary HTML form whose `submit` event is forwarded to an RxJS `Subject<SubmitEvent>`:
 
 ```tsx
 const submit$ = new Subject<SubmitEvent>();
 
 <form on={{ submit: submit$ }}>
-  <input name="title" type="text" required />
+  <input
+    name="title"
+    type="text"
+    placeholder="What needs doing?"
+    required
+  />
   <button type="submit">Add</button>
 </form>
 ```
 
 This matters because the user intent is **submit this form**, not **click this particular button**. Keyboard submission and button submission therefore enter the same source stream.
 
-The DOM renderer remains domain-agnostic. It forwards the event package; application code decides what that event means.
+The DOM renderer still knows nothing about Todos or forms. Its responsibility remains the M02 rule: take a browser event and forward that event package to an `Observer`. The application decides what the event means.
 
-### FormData becomes domain data before the effect
+The browser-default navigation is stopped by an ordinary function used inside the pipeline:
 
-The browser converts the submitting form into a typed domain input before invoking the effect:
+```ts
+const preventFormNavigation = (event: SubmitEvent): void => {
+  event.preventDefault();
+};
+```
+
+The operator remains visible:
+
+```ts
+submit$.pipe(
+  tap(preventFormNavigation),
+  ...
+);
+```
+
+This follows the project's FP/RxJS rule: **name the domain or application function; do not rename the RxJS mechanism around it.**
+
+### FormData is converted into domain data before the effect
+
+The form element is available as `event.currentTarget`. M07 reads `FormData` from that exact submitting form instead of searching global DOM state.
+
+Conceptually:
 
 ```text
 SubmitEvent
@@ -226,35 +254,68 @@ createTodoInput(title)
 CreateTodoInput
 ```
 
-After that boundary, the transport moves a typed package. It does not know Todo semantics.
+`createTodoInput()` lives in `src/domain/todos.ts`. It trims the title and returns a typed `CreateTodoInput` only for a non-empty value.
 
-### Submit concurrency policy remains explicit
-
-The central policy is visible as `exhaustMap`:
+The important boundary is:
 
 ```text
-mergeMap   = allow overlapping submissions
-switchMap  = replace with the latest submission
-concatMap  = queue submissions
-exhaustMap = ignore submissions while one is active
+browser representation      domain representation
+FormData / string      →     CreateTodoInput
 ```
 
-For Todo creation, M07 chooses:
+After that conversion, the server-action transport moves a typed package. It does not care what a Todo title means.
+
+### The submit concurrency policy is explicit
+
+The central browser pipeline is:
+
+```ts
+const status$ = submit$.pipe(
+  tap(preventFormNavigation),
+  exhaustMap((event) => {
+    const submission = readTodoSubmission(event);
+    // ... invoke action, invalidate query, reset form
+  }),
+  startWith(''),
+);
+```
+
+`exhaustMap` is deliberately visible because it states the form's concurrency policy:
+
+> While one Todo creation is in flight, ignore additional submissions.
+
+In practical terms:
 
 ```text
+time ─────────────────────────────────────────►
+
 submit     A────B────C────────────D
            │    ×    ×             │
+           │                       │
            ▼                       ▼
 action     [ save A ........ ]     [ save D ... ]
 
 policy     exhaustMap = ignore while busy
 ```
 
-The server-action API itself does not hide or choose this temporal policy.
+Nothing in the server-action API chooses this for the application. Another form can choose a different policy without changing the transport:
 
-### Shared server-action references are contracts
+```text
+mergeMap   = allow overlapping submissions
+switchMap  = cancel/replace with the latest submission
+concatMap  = queue submissions
+exhaustMap = ignore submissions while one is active
+```
 
-The client and server share an action identity and TypeScript input/output types without making browser code import server implementation details:
+This is a central design decision for `rxjs-fullstack`: **the effect describes how to execute one request; the RxJS pipeline describes how multiple requests relate over time.**
+
+### Shared server-action references are contracts, not implementations
+
+The client and server need to agree that an action exists and what TypeScript values it carries, but the browser must not import server implementation code.
+
+M07 therefore introduces `ServerActionRef<TInput, TOutput>`.
+
+The Todo action declaration is intentionally small:
 
 ```ts
 export const createTodoAction = defineServerAction<CreateTodoInput, Todo>(
@@ -262,7 +323,7 @@ export const createTodoAction = defineServerAction<CreateTodoInput, Todo>(
 );
 ```
 
-That declaration provides:
+It provides three things:
 
 ```text
 action identity     todos.create
@@ -270,11 +331,35 @@ input type          CreateTodoInput
 output type         Todo
 ```
 
-It does not own persistence, Hono, query invalidation, validation implementation, or concurrency policy.
+It does **not** contain:
+
+- Todo persistence,
+- validation implementation,
+- Hono code,
+- server-only dependencies,
+- query invalidation,
+- concurrency policy.
+
+This makes the action reference safe to share with browser code while keeping the server implementation physically and conceptually separate.
+
+The shared primitives live in:
+
+```text
+src/actions/action.ts
+src/actions/todos.ts
+```
 
 ### Client action execution is cold and cancellable
 
-`invokeServerAction$()` returns an Observable backed by `fromFetch`:
+The browser invokes the action through:
+
+```ts
+invokeServerAction$(createTodoAction, input)
+```
+
+`invokeServerAction$()` returns an RxJS Observable backed by `fromFetch`.
+
+That gives the client action the same execution model as the rest of the framework:
 
 ```text
 Observable exists
@@ -294,11 +379,74 @@ Todo emitted
 complete
 ```
 
-Because the request is owned by the Observable subscription, view teardown can propagate cancellation to the active HTTP effect.
+The action URL is derived from the action identity:
 
-### Server action execution is also lazy RxJS
+```text
+todos.create
+     ↓
+/api/actions/todos.create
+```
 
-The generic server boundary separates runtime parsing and effect execution:
+The request body contains the typed input serialized as JSON.
+
+This transport remains intentionally small. It does not know about forms, Todo state, `exhaustMap`, or Query/Cache. It performs one job:
+
+```text
+ServerActionRef<Input, Output> + Input
+                ↓
+        Observable<Output>
+```
+
+### Cancellation follows the RxJS Subscription
+
+Because the action request is a `fromFetch` Observable, unsubscription aborts the underlying request.
+
+The cancellation chain is therefore explicit:
+
+```text
+mount(TodoApp)
+    ↓
+view Subscription
+    ↓
+status$ subscription
+    ↓
+active createTodo$ subscription
+    ↓
+fromFetch request
+```
+
+If the mounted view is torn down:
+
+```text
+view lifetime.unsubscribe()
+        ↓
+status$ unsubscribes
+        ↓
+active inner action unsubscribes
+        ↓
+fromFetch aborts HTTP request
+```
+
+M07 therefore does not introduce a second cancellation system. It extends the M02 lifetime rule across the network boundary: **the RxJS Subscription remains the owner of browser work.**
+
+### The server action is also a lazy RxJS dataflow
+
+The server side mirrors the browser-side execution model.
+
+`registerServerAction()` connects a shared `ServerActionRef` to a server-only handler. The handler contract separates input parsing from execution:
+
+```ts
+interface ServerActionHandler<TInput, TOutput> {
+  parse(value: unknown): TInput;
+  run(
+    input: TInput,
+    context: ServerActionContext,
+  ): Observable<TOutput>;
+  successStatus?: number;
+}
+```
+
+The HTTP adapter first obtains raw JSON. The typed server execution is then described by `executeServerAction$()`:
 
 ```text
 raw unknown JSON
@@ -316,11 +464,96 @@ handler.run(input, context)
 Observable<TOutput>
 ```
 
-The request `AbortSignal` is available to server action handlers so later database or network effects can participate in the same cancellation boundary.
+Both parsing and handler invocation are inside `defer()`. That means they do not run merely because the Observable was constructed.
 
-### Query/Cache owns the read side after a write
+At the HTTP boundary, Hono consumes that lazy description with `firstValueFrom()` and converts the result into a JSON `Response`.
 
-The action does not secretly mutate browser state. The application explicitly invalidates the query after a successful create:
+```text
+Hono owns HTTP
+       ↓
+firstValueFrom(executeServerAction$(...))
+       ↓
+RxJS owns action execution
+       ↓
+Hono owns HTTP response
+```
+
+This is the same boundary pattern already established for server rendering: asynchronous execution happens before the pure boundary consumes its resolved value.
+
+### Raw input is validated again on the server
+
+TypeScript types disappear at the network boundary, so a typed client declaration is not sufficient runtime validation.
+
+The server receives `unknown` and calls the domain parser:
+
+```ts
+parseCreateTodoInput(value)
+```
+
+The flow is:
+
+```text
+JSON payload
+  unknown
+    ↓
+parseCreateTodoInput
+    ↓
+CreateTodoInput | undefined
+    ↓
+valid input ──────────────► run action
+invalid input ────────────► HTTP 400
+```
+
+This means the action reference gives compile-time agreement while the domain parser gives runtime trust at the server boundary.
+
+The validation rule itself still lives in the domain layer, not in Hono and not in the generic action adapter.
+
+### Server context carries request lifetime information
+
+A server action receives:
+
+```ts
+interface ServerActionContext {
+  request: Request;
+  signal: AbortSignal;
+}
+```
+
+The Todo action checks `signal.aborted` before performing the in-memory write. This establishes the first server-action cancellation hook and leaves room for later database or network effects to consume the same request signal.
+
+M07 does not yet claim that every possible server-side side effect is automatically cancellable. What it establishes is the correct architecture: **the request AbortSignal is available to the RxJS server action instead of being hidden by the HTTP adapter.**
+
+### Todo business logic remains outside the action framework
+
+The server-specific Todo store lives in `src/server/todos-store.ts`. The generic action adapter does not know its structure.
+
+The Todo action performs this conceptual work:
+
+```text
+CreateTodoInput
+      ↓
+addTodo(input)
+      ↓
+Todo
+```
+
+The RxJS layer merely lifts that operation into a lazy execution description:
+
+```text
+defer(() => of(addTodo(input)))
+```
+
+This preserves the project's rule:
+
+> **Pure/domain logic inside; RxJS and HTTP plumbing outside.**
+
+The domain can later change from an in-memory array to a database without changing the form source, the `exhaustMap` policy, the action reference, or the basic action transport.
+
+### Query/Cache owns the read side after a successful write
+
+M07 deliberately does not make the server action secretly update browser state.
+
+The action returns the created `Todo`. The application then explicitly invalidates the existing Todos query:
 
 ```text
 createTodo$(input)
@@ -336,47 +569,223 @@ query result emits
 list$ renders latest data
 ```
 
-This keeps action effects and cached reads separate but coordinated.
+The relevant pipeline uses `concatMap` because the status should not become `Saved.` until invalidation/refetch work has completed:
+
+```ts
+createTodo$(submission.input).pipe(
+  concatMap(() =>
+    queryClient.invalidateQueries({ queryKey: todosQuery.queryKey }),
+  ),
+  tap(() => submission.form.reset()),
+  map(() => 'Saved.'),
+  startWith('Saving...'),
+);
+```
+
+This gives each mechanism one responsibility:
+
+| Concern | Owner |
+| --- | --- |
+| form event | browser / JSX Observer binding |
+| temporal submit policy | `exhaustMap` |
+| domain input creation | `createTodoInput()` |
+| client action transport | `invokeServerAction$()` / `fromFetch` |
+| HTTP routing and response | Hono |
+| runtime input validation | `parseCreateTodoInput()` |
+| Todo creation | `addTodo()` |
+| server execution | `executeServerAction$()` + handler Observable |
+| cached server reads | Query/Cache |
+| post-write refresh | explicit `invalidateQueries()` |
+| browser lifetime/cancellation | RxJS `Subscription` |
+
+No single layer becomes a hidden mini-framework.
+
+### The M07 Todo write path versus the read path
+
+M07 now gives the Todos feature two intentionally different fullstack paths.
+
+Read path:
+
+```text
+TodoApp subscription
+      ↓
+queryClient.query$(todosQuery)
+      ↓
+GET /api/todos
+      ↓
+readonly Todo[]
+      ↓
+Query/Cache
+      ↓
+list$ view
+```
+
+Write path:
+
+```text
+<form submit>
+      ↓
+submit$
+      ↓
+exhaustMap
+      ↓
+createTodo$(CreateTodoInput)
+      ↓
+POST /api/actions/todos.create
+      ↓
+server action
+      ↓
+Todo
+      ↓
+invalidate ['todos']
+      ↓
+read path refetches
+```
+
+This separation is useful: **actions perform effects; queries describe cached server reads.** They coordinate explicitly rather than being fused into one opaque abstraction.
+
+### M07 failure behavior is explicit
+
+The action boundary distinguishes several failure classes:
+
+```text
+malformed JSON
+    ↓
+HTTP 400
+
+valid JSON shape but invalid domain input
+    ↓
+ServerActionInputError
+    ↓
+HTTP 400
+
+unexpected server handler failure
+    ↓
+HTTP 500
+
+non-2xx browser response
+    ↓
+ServerActionRequestError
+    ↓
+Observable error
+    ↓
+catchError in Todo pipeline
+    ↓
+"Failed to save."
+```
+
+The error therefore travels through the Observable error channel until the application decides how to turn it into view state.
 
 ### M07 source map
 
+The milestone is intentionally spread across small responsibility-focused files:
+
 ```text
 src/domain/todos.ts
-  Todo / CreateTodoInput types and parsers
+  Todo and CreateTodoInput types
+  createTodoInput()
+  parseCreateTodoInput()
 
 src/actions/action.ts
-  ServerActionRef, action href, client invocation
+  ServerActionRef<Input, Output>
+  defineServerAction()
+  serverActionHref()
+  invokeServerAction$()
+  ServerActionRequestError
 
 src/actions/todos.ts
-  shared createTodoAction identity
+  shared createTodoAction reference
 
 src/queries/todos.ts
-  todosQuery + createTodo$ browser action
+  todosQuery read definition
+  createTodo$ client action invocation
 
 src/examples/todos.tsx
-  form source, exhaustMap policy, invalidation
+  form source
+  SubmitEvent → FormData → CreateTodoInput
+  exhaustMap submit policy
+  Query/Cache invalidation
+  status rendering
 
 src/server/action.ts
-  generic lazy server-action execution
+  ServerActionHandler contract
+  executeServerAction$()
+  registerServerAction()
+  HTTP/error translation
 
 src/server/api.ts
-  HTTP registration
+  GET /todos
+  createTodoAction server registration
 
 src/server/todos-store.ts
-  Todo domain storage proof
+  in-memory Todo state and addTodo()
 ```
+
+This file layout is part of the design. Shared action identity, browser transport, generic server adapter, domain rules, application orchestration, and server storage do not collapse into one module.
 
 ### M07 verification
 
-The executable verifier checks laziness, one execution per subscription, HTTP status behavior, runtime input validation, visibility of created data through the query read path, removal of the old ad-hoc mutation endpoint, typechecking, and browser bundling.
+`scripts/verify.tsx` treats the milestone as an executable architectural specification. It checks that:
 
-The larger result is: **server actions are not a second execution model beside RxJS; they are effects that participate in the existing RxJS machine.**
+- server-action input parsing does not run before subscription,
+- the server handler does not run before subscription,
+- one subscription executes the action exactly once,
+- valid Todo action input returns HTTP `201`,
+- the returned object contains the created Todo,
+- created data becomes visible through the existing `GET /api/todos` read path,
+- empty/invalid Todo input returns HTTP `400`,
+- the old ad-hoc `POST /api/todos` mutation endpoint is no longer the write path,
+- the browser examples still typecheck and bundle successfully.
+
+The milestone is therefore not considered complete merely because the Todo UI works. The verification also protects the intended execution semantics: laziness, typed boundaries, HTTP behavior, and separation of the old mutation route from the new server-action architecture.
+
+### What M07 establishes
+
+M07 adds one important capability, but more importantly it establishes a reusable execution pattern for later fullstack features:
+
+```text
+source event
+    ↓
+plain function extracts domain value
+    ↓
+RxJS operator chooses temporal policy
+    ↓
+cold effect Observable
+    ↓
+server RxJS dataflow
+    ↓
+domain operation
+    ↓
+result / error
+    ↓
+explicit state or cache update
+```
+
+A future login form, checkout command, settings save, file metadata update, or database mutation can use the same machine while changing only the domain packages and the chosen concurrency policy.
+
+That is the larger M07 result: **server actions are not a new execution model added beside RxJS; they are one more effect that participates in the existing RxJS machine.**
 
 ## M08 — SSR Query Prefetch / Client Data Continuity
 
 M08 closes the read-side discontinuity that remained after M05–M07.
 
-Before M08, the server rendered a loading shell and the browser started the query from an empty cache. M08 changes that to one query lifecycle across the HTML boundary:
+Before M08, `/todos` had two separate starts:
+
+```text
+server request                     browser mount
+     ↓                                  ↓
+SSR route                           TodoApp subscribes
+     ↓                                  ↓
+"Loading todos..."                 Query/Cache is empty
+                                        ↓
+                                   GET /api/todos
+                                        ↓
+                                   render Todos
+```
+
+The server knew how to render the page shell, and the browser knew how to fetch Todos, but server-resolved data was not carried across the HTML boundary. The browser therefore had to cold-start the same read again.
+
+M08 changes that flow to:
 
 ```text
 HTTP GET /todos
@@ -409,17 +818,55 @@ TodoApp subscribes to the same query key
 fresh cached Todos emit immediately
 ```
 
-The important result is **continuity of the same query state across the server/browser boundary**.
+The important result is not merely that the server can fetch Todos. The important result is **continuity of the same query state across the server/browser boundary**.
 
-### Request-scoped server QueryClient
+### The QueryClient is request-scoped on the server
 
-Every page request receives a new QueryClient. Query state is isolated between requests unless an application later introduces an explicit shared server cache.
+The server must never reuse one application-wide QueryClient across users or requests. M08 therefore creates a new QueryClient inside each Hono page request:
 
-The QueryClient and fetch boundary travel through `rxjs-router` context, which keeps route modules responsible for declaring their own data requirements rather than adding route-specific branches to Hono.
+```ts
+const queryClient = new QueryClient();
+```
 
-### The route controls query lifetime
+That client is passed into `rxjs-router` through its explicit route context:
 
-The Todos loader subscribes to its query and connects the route request `AbortSignal` using `takeUntil(...)`.
+```ts
+resolveRequest({
+  routes,
+  request,
+  context: {
+    queryClient,
+    fetch: routeFetch,
+  },
+});
+```
+
+This preserves the route architecture established in M06. Hono does not gain a special `if (pathname === '/todos')` prefetch branch. The route loader declares the data it needs; Hono only supplies request infrastructure.
+
+Request isolation is therefore:
+
+```text
+request A ──► QueryClient A ──► dehydrate A ──► response A
+request B ──► QueryClient B ──► dehydrate B ──► response B
+```
+
+No query state crosses between requests unless an application later introduces an explicit shared server cache.
+
+### The Todos route owns its SSR query requirement
+
+`src/routes/todos.tsx` now uses the QueryClient from router context while resolving the page.
+
+The server loader subscribes to:
+
+```ts
+context.queryClient.query$(createTodosQuery(context.fetch))
+```
+
+and waits until the query has either data or an error before creating the pure SSR view.
+
+The route request `AbortSignal` is connected with `takeUntil(...)`. If the request is cancelled while the query is active, the route subscription is torn down rather than leaving a detached page-read subscription running.
+
+Conceptually:
 
 ```text
 route request signal ───────────────┐
@@ -429,17 +876,35 @@ query$ ── loading ── data ── ...    │
   └──────── takeUntil(abort) ◄──────┘
 ```
 
-The request owns the lifetime of the server read.
+The request controls the lifetime of the server read.
 
-### Server and browser share one query identity
+### Server and browser use the same query identity
 
-The query remains `['todos']` on both sides. `createTodosQuery(fetcher)` makes only the transport replaceable; query identity, result type, and cache semantics remain unchanged.
+M08 keeps the existing query key:
 
-The server uses an in-process Hono fetch adapter, while the browser uses normal Web `fetch`.
+```ts
+['todos']
+```
 
-### SSR still renders resolved values, not Observables
+`createTodosQuery(fetcher)` makes only the transport replaceable. The browser uses the normal Web `fetch`; the server receives an in-process Hono fetch adapter.
 
-M03's renderer rule remains intact:
+The query contract remains:
+
+```text
+query key        ['todos']
+result           readonly Todo[]
+HTTP contract    GET /api/todos
+```
+
+The server adapter resolves `/api/todos` through the same Hono application without performing a real network round-trip. This is important because M08 does not introduce a second Todo read implementation just for SSR.
+
+The transport can change; the query identity and data package do not.
+
+### SSR renders resolved data, not an Observable
+
+M03's renderer rule remains unchanged: `renderToString()` never subscribes.
+
+M08 resolves the query before rendering and then builds a static `TodoSnapshot` from the resulting `readonly Todo[]`:
 
 ```text
 query$ subscription
@@ -448,28 +913,40 @@ readonly Todo[]
       ↓
 TodoSnapshot
       ↓
-plain ViewChild
+ViewChild containing plain values
       ↓
 renderToString()
 ```
 
-M08 does not teach `renderToString()` how to subscribe.
+The SSR renderer still receives no live Observable child.
 
-### Dehydrated state travels as data
+This means M08 extends SSR without weakening the M03 boundary. Asynchronous execution remains outside the pure HTML renderer.
 
-Successful Query/Cache state is serialized into:
+### Query state is dehydrated into the HTML document
+
+After routing has finished, the request-scoped QueryClient contains the successful Todos query. The server calls:
+
+```ts
+dehydrate(queryClient)
+```
+
+and emits the result into a JSON bootstrap script:
 
 ```html
 <script id="rxjs-query-state" type="application/json">...</script>
 ```
 
-The JSON is HTML-safe escaped. The document contains data, not embedded query logic.
+`renderDocument()` now supports generic JSON bootstrap scripts and performs HTML-safe JSON escaping. In particular, `<`, `>`, and `&` are encoded so query data cannot accidentally terminate the script element and become executable HTML.
 
-### Browser cache restoration happens before subscription
+The bootstrap element is data, not JavaScript code. No query logic is embedded in the document.
 
-The bootstrap ordering is deliberate:
+### The browser restores Query/Cache before TodoApp subscribes
+
+`src/examples/todos-client.tsx` now performs the bootstrap in this order:
 
 ```text
+find #app
+   ↓
 read #rxjs-query-state
    ↓
 JSON.parse
@@ -478,20 +955,32 @@ hydrate(queryClient, state)
    ↓
 mount(TodoApp)
    ↓
-TodoApp subscribes
+TodoApp subscribes to queryClient.query$(todosQuery)
 ```
 
-Hydrating first prevents an empty browser cache from racing ahead with another cold fetch.
+The ordering is essential.
 
-### Freshness prevents the immediate duplicate read
+If `TodoApp` subscribed first, its empty client QueryClient could begin a browser fetch before the server state was restored. Hydrating first means the first browser subscription sees the server-populated cache.
 
-Hydration alone is insufficient when `staleTime` is zero. M08 therefore makes the Todos freshness policy explicit:
+The helper `hydrateQueryClientFromDocument()` performs only this bootstrap boundary. It does not mount UI or choose query behavior.
+
+### Freshness policy prevents the immediate second cold fetch
+
+Hydration alone is not enough.
+
+A query with `staleTime: 0` is stale immediately. The client could correctly restore the server value and then immediately refetch it because the normal query policy says the data is stale.
+
+M08 therefore makes freshness explicit for Todos:
 
 ```ts
 staleTime: 30_000
 ```
 
+The temporal behavior is now:
+
 ```text
+time ─────────────────────────────────────────────►
+
 server fetch       ● data resolved
                    │
 HTML response      │──── dehydrated state ────►
@@ -503,9 +992,15 @@ client subscribe   ● cached data emits
                    └── no immediate GET /api/todos
 ```
 
-Normal Query/Cache staleness and refetch behavior resumes after the freshness window.
+After the freshness window expires, ordinary Query/Cache rules apply again. M08 does not disable refetching; it prevents an unnecessary duplicate read during the initial server-to-browser handoff.
 
-### M08 is Query/Cache hydration, not DOM hydration
+### M08 is data hydration, not DOM hydration
+
+The word "hydrate" here refers specifically to **Query/Cache state**.
+
+The current DOM renderer's `mount()` still owns its container and calls `replaceChildren()`. When the browser client mounts, it may replace the static SSR snapshot with the live RxJS view.
+
+That is deliberately outside the M08 claim.
 
 M08 guarantees:
 
@@ -519,47 +1014,101 @@ It does not yet claim:
 server DOM nodes ──► attach bindings in place
 ```
 
-The DOM renderer may still replace the static SSR region when mounting the live browser view. Keeping these two hydration problems separate makes the architecture easier to reason about.
+Keeping those two problems separate makes the architecture easier to reason about. Query-state continuity can be verified independently of a future DOM-hydration strategy.
 
 ### M08 source map
 
 ```text
 src/queries/todos.ts
-  shared query identity + freshness policy
+  createTodosQuery(fetcher)
+  shared ['todos'] identity
+  explicit staleTime freshness policy
 
 src/server/route-context.ts
-  QueryClient + fetch context
+  request-scoped QueryClient + in-process fetch contract
 
 src/routes/todos.tsx
-  SSR query subscription + request cancellation
+  SSR query subscription
+  request cancellation with takeUntil
+  static TodoSnapshot construction
 
 src/examples/todos.tsx
-  shared list, static snapshot, live TodoApp
+  shared TodoList
+  static TodoSnapshot
+  live TodoApp
 
 src/query/ssr.ts
-  bootstrap state helper
+  QUERY_STATE_SCRIPT_ID
+  hydrateQueryClientFromDocument()
 
 src/render/html.ts
-  safe application/json serialization
+  generic application/json bootstrap scripts
+  HTML-safe JSON serialization
 
 src/server/app.tsx
-  request boundary and dehydrated state delivery
+  request-scoped QueryClient
+  router context
+  dehydrate() at the HTTP/HTML boundary
 
 src/examples/todos-client.tsx
-  cache restore before mount
+  restore cache before mount
 ```
+
+Each file owns one piece of the handoff rather than hiding the complete process behind a new framework lifecycle.
 
 ### M08 verification
 
-The verifier proves that SSR contains actual Todo data instead of a loading placeholder, dehydrated query state is present, a server query executes once, browser hydration restores that value, and a fresh hydrated client query performs zero duplicate query executions.
+`scripts/verify.tsx` now checks the continuity contract directly:
 
-The larger result is: **SSR may resolve the first value, but Query/Cache remains the state machine that owns the read across the boundary.**
+- `/todos` SSR contains actual seeded Todo data,
+- `/todos` SSR no longer contains the `Loading todos...` placeholder,
+- the HTML contains the `rxjs-query-state` bootstrap element,
+- a server QueryClient executes a test query exactly once,
+- that QueryClient can be dehydrated,
+- a fresh browser QueryClient can restore the serialized state,
+- the browser query emits the server value after hydration,
+- the browser query function is **not executed** while the hydrated data remains fresh,
+- TypeScript and both browser bundles still build through the normal `bun run check` pipeline.
+
+The most important executable assertion is:
+
+```text
+server query executions   = 1
+browser query executions  = 0
+browser observed value    = server value
+```
+
+That is the concrete M08 definition of client data continuity.
+
+### What M08 establishes
+
+M08 adds a reusable server/browser read path:
+
+```text
+route declares query
+      ↓
+server subscribes
+      ↓
+request QueryClient remembers result
+      ↓
+SSR consumes resolved data
+      ↓
+QueryClient dehydrates into HTML
+      ↓
+browser QueryClient hydrates before subscription
+      ↓
+normal RxJS Query/Cache execution continues
+```
+
+The server and browser are no longer two unrelated executions that happen to request the same endpoint. They are two phases of one query lifecycle separated by an HTML transport boundary.
+
+The broader principle is: **SSR may resolve the first value, but Query/Cache remains the state machine that owns the read across the boundary.**
 
 ## M09 — Static Site Generation
 
 M09 proves that request-time SSR and build-time static generation do not need separate application models.
 
-The framework already had the complete page machine:
+The framework already had the complete page machine before M09:
 
 ```text
 route match
@@ -577,25 +1126,57 @@ pure renderToString()
 HTML document
 ```
 
-M09 keeps that machine and changes only **when** it executes and **what consumes the resulting HTML**.
+M09 keeps that machine and changes only **when** it is executed and **what consumes the resulting HTML**.
+
+Request-time SSR:
 
 ```text
-HTTP request                    build command
-    ↓                               ↓
-renderRouteDocument()           pathname
-    ↓                               ↓
-HTML                           renderRouteDocument()
-    ↓                               ↓
-Hono Response                  HTML
-                                    ↓
-                               static index.html
+HTTP request
+    ↓
+renderRouteDocument()
+    ↓
+HTML
+    ↓
+Hono Response
 ```
 
-The central M09 rule is: **SSG is not a new renderer. It is the existing route-document renderer executed during the build.**
+Build-time SSG:
 
-### Shared route-document rendering
+```text
+build command
+    ↓
+static route pathname
+    ↓
+renderRouteDocument()
+    ↓
+HTML
+    ↓
+dist/static/.../index.html
+```
 
-`src/render/page.ts` owns the reusable page resolution operation:
+This is the central M09 rule: **SSG is not a new renderer. It is the existing route-document renderer executed during the build.**
+
+### One route-document renderer now owns page resolution
+
+Before M09, `src/server/app.tsx` contained both HTTP concerns and the reusable page-resolution work: it created the request QueryClient, called `rxjs-router`, rendered the resolved JSX, dehydrated query state, and then returned HTML through Hono.
+
+M09 extracts the reusable part into:
+
+```text
+src/render/page.ts
+```
+
+Its central operation is:
+
+```ts
+renderRouteDocument({
+  routes,
+  request,
+  fetch,
+})
+```
+
+Conceptually:
 
 ```text
 routes + Request + fetch boundary
@@ -617,13 +1198,41 @@ renderDocument()
 RouteDocumentResult
 ```
 
-Hono translates that result into an HTTP response. SSG translates the same successful page result into a file.
+The result can be a page, redirect, not-found result, or error. The consumer decides what those values mean.
 
-### Static paths come from the generated route tree
+Hono now owns only the HTTP translation:
 
-M09 does not add a second route manifest. `collectStaticPathnames()` normalizes the M06 generated router tree and derives concrete `fullPath` values.
+```text
+RouteDocumentResult.page      → context.html(...)
+RouteDocumentResult.redirect  → context.redirect(...)
+RouteDocumentResult.notFound  → HTTP 404
+RouteDocumentResult.error     → HTTP 500
+```
 
-The current set is:
+The static builder accepts only a successful page result and turns it into a file.
+
+This extraction is important beyond M09: the framework now has an execution boundary that is independent of whether HTML is requested by a live HTTP client or generated ahead of time.
+
+### Static paths come from the generated router tree
+
+M06 already made `src/routes.generated.ts` the generated application route tree. M09 deliberately does **not** add a second `staticRoutes` registry.
+
+Instead, `collectStaticPathnames()` asks `rxjs-router` to normalize that same tree and reads each route node's `fullPath`.
+
+For the current application:
+
+```text
+generated route tree
+      ↓
+normalizeRoutes()
+      ↓
+/
+/about
+/counter
+/todos
+```
+
+The current static set is therefore derived automatically:
 
 ```text
 /
@@ -632,11 +1241,51 @@ The current set is:
 /todos
 ```
 
-Parameterized paths such as `/posts/$slug` are excluded until the application explicitly supplies build-time parameter values. The generator never guesses domain data.
+Adding another concrete file-discovered route later automatically makes it eligible for the same discovery process.
 
-### Static URL mapping
+This preserves the M06 principle: **there is one route tree, not one tree for runtime routing and another manifest for build tooling.**
 
-M09 emits directory-index output suitable for ordinary static hosts:
+### Parameterized routes are explicit future build inputs
+
+A concrete route such as:
+
+```text
+/about
+```
+
+can be generated immediately because its pathname is complete.
+
+A route such as:
+
+```text
+/posts/$slug
+```
+
+is different. The framework cannot know which `slug` values should exist at build time.
+
+M09 therefore excludes route paths containing build-time parameters rather than guessing values or accidentally writing a literal `$slug` directory.
+
+```text
+/posts/$slug
+      ↓
+requires explicit build-time params
+      ↓
+not generated by M09 automatic static discovery
+```
+
+This is intentional scope, not a limitation hidden by the generator. A later parameterized-SSG feature can supply a list such as:
+
+```text
+/posts/rxjs
+/posts/functional-programming
+/posts/observables
+```
+
+and feed those concrete pathnames into the same `renderStaticPage()` operation without changing the renderer.
+
+### Static URL structure maps to directory index files
+
+M09 uses deployment-friendly directory-index output:
 
 ```text
 /          → dist/static/index.html
@@ -645,9 +1294,17 @@ M09 emits directory-index output suitable for ordinary static hosts:
 /todos     → dist/static/todos/index.html
 ```
 
-### Build-time Query/Cache reuse
+That mapping is owned by `staticOutputPath()`.
 
-The `/todos` static page reuses the M08 query path:
+The output structure means ordinary static hosts can serve clean URLs without requiring framework-specific URL rewriting just to remove `.html` suffixes.
+
+### Build-time pages reuse M08 Query/Cache prefetch
+
+The most important proof route for M09 is `/todos`.
+
+A simplistic SSG implementation could render only routes with synchronous data and leave query-backed pages to the browser. M09 instead reuses the M08 server execution path.
+
+Build-time `/todos` is:
 
 ```text
 renderStaticPage('/todos')
@@ -656,69 +1313,250 @@ renderRouteDocument()
       ↓
 Todos route loader
       ↓
-build-scoped QueryClient
+request/build-scoped QueryClient
+      ↓
+queryClient.query$(createTodosQuery(fetch))
       ↓
 GET /api/todos through supplied fetch boundary
       ↓
 readonly Todo[]
       ↓
-TodoSnapshot
+static TodoSnapshot
       ↓
 dehydrate(QueryClient)
       ↓
-HTML + query bootstrap
+HTML with prefetched Todos + query bootstrap
       ↓
 dist/static/todos/index.html
 ```
 
-Each generated page receives its own QueryClient, preserving the request-isolation principle at build time.
+The generated page therefore contains the same two outputs as M08 SSR:
 
-### SSG preserves the pure HTML boundary
+```text
+visible resolved HTML
++
+deferred browser Query/Cache state
+```
 
-`renderToString()` still never subscribes. All build-time data work resolves before the renderer receives the view.
+The build process does not introduce a special Todo reader. `scripts/generate-static.ts` supplies an in-process fetch adapter to the same Hono API contract, so `GET /api/todos` remains the read boundary used by the query.
 
-### SSR/SSG equivalence becomes testable
+### Build-time QueryClient state is isolated per generated page
 
-Deterministic pages such as `/about` are compared byte-for-byte between request-time SSR and build-time SSG. Query-backed pages are checked semantically because dehydration timestamps can differ between separate executions.
+`renderRouteDocument()` creates a fresh QueryClient for every page render.
 
-### Build command
+That gives static generation the same isolation principle M08 established for HTTP requests:
+
+```text
+/about build
+    ↓
+QueryClient A
+    ↓
+/about HTML
+
+/todos build
+    ↓
+QueryClient B
+    ↓
+/todos HTML + dehydrated Todos state
+```
+
+Data from one generated page is not implicitly carried into another page's cache.
+
+If the framework later chooses to introduce cross-page build caching, that will be an explicit optimization rather than an accidental consequence of one process-global QueryClient.
+
+### SSG does not weaken the pure HTML renderer
+
+M03 remains unchanged.
+
+`renderToString()` still receives only resolved values and still rejects Observable children.
+
+The timing is:
+
+```text
+build-time route/query execution
+      ↓
+resolved PageData
+      ↓
+plain/static ViewChild
+      ↓
+renderToString()
+```
+
+M09 therefore adds no subscription logic to the renderer. The static builder coordinates execution before the pure rendering boundary, exactly as SSR does.
+
+### SSG and SSR can be compared directly
+
+Because both modes now call the same `renderRouteDocument()`, deterministic pages can be checked byte-for-byte.
+
+For `/about`:
+
+```text
+HTTP /about
+    ↓
+renderRouteDocument()
+    ↓
+SSR HTML
+
+build /about
+    ↓
+renderRouteDocument()
+    ↓
+static HTML
+```
+
+M09 verification asserts that those two HTML strings are identical.
+
+For query-backed pages such as `/todos`, dehydrated query timestamps naturally differ between separate executions, so verification checks the semantic invariants instead:
+
+```text
+static page contains resolved Todo data       ✅
+static page does not contain Loading todos... ✅
+static page contains rxjs-query-state         ✅
+bootstrap contains queryKey ['todos']         ✅
+```
+
+This distinguishes stable page semantics from incidental execution timestamps.
+
+### The build command is explicit
+
+M09 adds:
 
 ```sh
 bun run build:static
 ```
 
-The generator discovers static paths, clears `dist/static`, renders each pathname, creates parent directories, and writes `index.html` files.
+That command:
+
+```text
+generate routes
+      ↓
+discover concrete static pathnames
+      ↓
+clear dist/static
+      ↓
+render each pathname
+      ↓
+create parent directory
+      ↓
+write index.html
+```
+
+The generator logs each mapping, for example:
+
+```text
+/ -> dist/static/index.html
+/about -> dist/static/about/index.html
+/counter -> dist/static/counter/index.html
+/todos -> dist/static/todos/index.html
+```
+
+`dist/` remains build output and is therefore still excluded from Git.
 
 ### M09 source map
 
 ```text
 src/render/page.ts
+  renderRouteDocument()
   shared route/data/query/HTML execution
+  page / redirect / notFound / error result
 
 src/server/app.tsx
-  HTTP translation
+  Hono HTTP adapter around renderRouteDocument()
 
 src/ssg/static.ts
-  path discovery, output mapping, static rendering
+  collectStaticPathnames()
+  staticOutputPath()
+  renderStaticPage()
 
 scripts/generate-static.ts
-  build entry point and file writes
+  build entry point
+  static path iteration
+  output-directory creation
+  HTML file writes
 
 scripts/verify-static.ts
   physical artifact verification
+  SSR/SSG /about equivalence
+  static /todos Query/Cache assertions
 
 scripts/verify.tsx
-  in-memory SSG semantics
+  static route discovery semantics
+  parameterized-route exclusion
+  in-memory build-time rendering assertions
 
 package.json
-  build:static + verify:static + check integration
+  build:static
+  verify:static
+  M09 steps in the complete check pipeline
 ```
 
 ### M09 verification
 
-The complete gate verifies static path discovery, parameterized-route exclusion, output mapping, `/about` SSR/SSG equality, `/todos` prefetch and dehydrated state, physical HTML artifacts, and compatibility with the browser bundles.
+M09 is protected at two levels.
 
-The larger result is: **SSR and SSG are execution-time policies around the same RxJS Fullstack page machine.**
+The normal executable verifier checks the framework behavior before files are written:
+
+- static pathnames are derived from the generated route tree,
+- the current set is exactly `/`, `/about`, `/counter`, and `/todos`,
+- root output maps to `dist/static/index.html`,
+- nested output maps to directory-index files,
+- parameterized `$...` routes are excluded without supplied build-time params,
+- build-time `/about` rendering equals request-time SSR byte-for-byte,
+- build-time `/todos` contains prefetched query data,
+- build-time `/todos` retains the M08 dehydrated Query/Cache bootstrap.
+
+The static artifact verifier then runs after `scripts/generate-static.ts` and checks the actual files:
+
+- every discovered concrete route produced an HTML file,
+- `dist/static/about/index.html` equals live SSR output for `/about`,
+- `dist/static/todos/index.html` contains the seeded Todo data,
+- the static Todos page has no loading placeholder,
+- the static Todos page contains the `rxjs-query-state` element,
+- its dehydrated state contains the `['todos']` query identity.
+
+The complete acceptance pipeline is now conceptually:
+
+```text
+route generation
+      ↓
+strict TypeScript
+      ↓
+M01-M09 executable verification
+      ↓
+static site generation
+      ↓
+static artifact verification
+      ↓
+browser client bundles
+```
+
+### What M09 establishes
+
+M09 turns the page pipeline into a reusable execution engine rather than an HTTP-only feature.
+
+```text
+                     ┌── request time ──► Hono Response
+route/data/JSX/HTML ─┤
+                     └── build time ────► static index.html
+```
+
+Everything above that final consumer remains the same:
+
+```text
+routes
+  ↓
+loaders
+  ↓
+RxJS / Query/Cache execution
+  ↓
+resolved model
+  ↓
+JSX
+  ↓
+pure HTML rendering
+```
+
+That is the larger M09 result: **SSR and SSG are execution-time policies around the same RxJS Fullstack page machine.**
 
 ## M10 — Runtime Adapters
 
