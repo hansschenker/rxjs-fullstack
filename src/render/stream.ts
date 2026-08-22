@@ -12,7 +12,7 @@ import type { HtmlJsonScript } from './html';
 import { renderDocumentPrefix, renderDocumentSuffix } from './html';
 
 export interface HtmlStreamSink {
-  write(chunk: Uint8Array): Promise<void>;
+  write(chunk: Uint8Array): Promise<unknown>;
   onAbort(callback: () => void): void;
 }
 
@@ -40,8 +40,9 @@ export const writeDocumentStream = async ({
   const abort$ = new Subject<void>();
   let aborted = false;
 
-  const write = (html: string): Promise<void> =>
-    sink.write(encoder.encode(html));
+  const write = async (html: string): Promise<void> => {
+    await sink.write(encoder.encode(html));
+  };
 
   sink.onAbort(() => {
     if (aborted) {
