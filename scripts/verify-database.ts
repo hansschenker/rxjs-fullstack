@@ -110,4 +110,9 @@ try {
   await rm(tempRoot, { recursive: true, force: true });
 }
 
+assertEqual(
+  process.exitCode,
+  0,
+  'M11: the database adapter must not leak PGlite internal exit state into the host process.',
+);
 console.log('M11 database integration verification passed.');
