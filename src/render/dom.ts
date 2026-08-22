@@ -7,6 +7,24 @@ import {
   type ViewChild,
 } from '../jsx/runtime';
 
+export interface MountOptions {
+  /**
+   * Called when an Observable child or attribute binding errors. Recovery
+   * belongs in the application dataflow (`catchError`); this hook only decides
+   * where an unrecovered error is reported. The default rethrows it as an
+   * unhandled error so failures stay loud.
+   */
+  readonly onError?: (error: unknown) => void;
+}
+
+type ErrorReporter = (error: unknown) => void;
+
+const reportUnhandledError: ErrorReporter = (error) => {
+  setTimeout(() => {
+    throw error;
+  });
+};
+
 const normalizeAttributeName = (name: string): string =>
   name === 'className' ? 'class' : name;
 
@@ -46,6 +64,7 @@ const bindProps = (
   element: Element,
   node: ElementNode,
   lifetime: Subscription,
+  onError: ErrorReporter,
 ): void => {
   for (const [name, value] of Object.entries(node.props)) {
     if (name === 'children') {
@@ -60,7 +79,15 @@ const bindProps = (
     }
 
     if (isObservable(value)) {
-      lifetime.add(value.subscribe((nextValue) => setElementValue(element, name, nextValue)));
+      lifetime.add(
+        value.subscribe({
+          next: (nextValue) => setElementValue(element, name, nextValue),
+          error: (error) => {
+            setElementValue(element, name, undefined);
+            onError(error);
+          },
+        }),
+      );
       continue;
     }
 
@@ -83,9 +110,10 @@ const renderChild = (
   parent: Node,
   before: Node | null,
   lifetime: Subscription,
+  onError: ErrorReporter,
 ): void => {
   if (Array.isArray(view)) {
-    view.forEach((child) => renderChild(child, parent, before, lifetime));
+    view.forEach((child) => renderChild(child, parent, before, lifetime, onError));
     return;
   }
 
@@ -114,7 +142,12 @@ const renderChild = (
           currentViewLifetime = new Subscription();
           lifetime.add(currentViewLifetime);
           removeBetween(start, end);
-          renderChild(nextView as ViewChild, parent, end, currentViewLifetime);
+          renderChild(nextView as ViewChild, parent, end, currentViewLifetime, onError);
+        },
+        error: (error) => {
+          currentViewLifetime.unsubscribe();
+          removeBetween(start, end);
+          onError(error);
         },
       }),
     );
@@ -126,19 +159,23 @@ const renderChild = (
   }
 
   if (view.kind === 'fragment') {
-    view.children.forEach((child) => renderChild(child, parent, before, lifetime));
+    view.children.forEach((child) => renderChild(child, parent, before, lifetime, onError));
     return;
   }
 
   const element = document.createElement(view.tag);
-  bindProps(element, view, lifetime);
-  view.children.forEach((child) => renderChild(child, element, null, lifetime));
+  bindProps(element, view, lifetime, onError);
+  view.children.forEach((child) => renderChild(child, element, null, lifetime, onError));
   parent.insertBefore(element, before);
 };
 
-export const mount = (view: ViewChild, container: Element): Subscription => {
+export const mount = (
+  view: ViewChild,
+  container: Element,
+  { onError = reportUnhandledError }: MountOptions = {},
+): Subscription => {
   const lifetime = new Subscription(() => container.replaceChildren());
   container.replaceChildren();
-  renderChild(view, container, null, lifetime);
+  renderChild(view, container, null, lifetime, onError);
   return lifetime;
 };

@@ -153,6 +153,70 @@ assertEqual(paragraph.getAttribute('class'), 'muted', 'M02: attribute bindings s
 attributeLifetime.unsubscribe();
 assertEqual(class$.observed, false, 'M02: unmounting must unsubscribe attribute bindings.');
 
+// M02: an erroring Observable child fails loudly — the current child is torn
+// down, the region is cleared instead of freezing stale DOM, and the error
+// reaches mount's onError hook. Siblings and the mount lifetime survive.
+const childErrors: Array<unknown> = [];
+const failing$ = new Subject<ViewChild>();
+const errorContainer = document.createElement('div');
+const errorLifetime = mount(
+  <div>
+    <p>stable</p>
+    {failing$}
+  </div>,
+  errorContainer,
+  { onError: (error) => childErrors.push(error) },
+);
+
+let innerActive = 0;
+const innerProbe$ = new Observable<string>((subscriber) => {
+  innerActive += 1;
+  subscriber.next('inner');
+  return () => {
+    innerActive -= 1;
+  };
+});
+
+failing$.next(<p>{innerProbe$}</p>);
+assertEqual(errorContainer.querySelectorAll('p').length, 2, 'M02: the live region should render before the error.');
+assertEqual(innerActive, 1, 'M02: the emitted child subscription should be active before the error.');
+
+failing$.error(new Error('child stream failed'));
+assertEqual(
+  errorContainer.querySelectorAll('p').length,
+  1,
+  'M02: an erroring live region must clear its content instead of freezing stale DOM.',
+);
+assertEqual(errorContainer.querySelector('p')?.textContent, 'stable', 'M02: sibling content must survive a live-region error.');
+assertEqual(innerActive, 0, 'M02: an erroring live region must tear down the current child subscription.');
+assertEqual(childErrors.length, 1, 'M02: the mount onError hook should receive the child error.');
+assert(
+  childErrors[0] instanceof Error && childErrors[0].message === 'child stream failed',
+  'M02: the reported error should be the original stream error.',
+);
+errorLifetime.unsubscribe();
+assertEqual(errorContainer.innerHTML, '', 'M02: the mount lifetime must remain usable after a binding error.');
+
+// M02: an erroring Observable attribute removes the stale value and reports.
+const attributeErrors: Array<unknown> = [];
+const failingClass$ = new Subject<string>();
+const attrErrorContainer = document.createElement('div');
+const attrErrorLifetime = mount(<p className={failingClass$}>styled</p>, attrErrorContainer, {
+  onError: (error) => attributeErrors.push(error),
+});
+const attrErrorParagraph = attrErrorContainer.querySelector('p');
+assert(attrErrorParagraph !== null, 'M02: the failing-attribute host should render.');
+failingClass$.next('accent');
+assertEqual(attrErrorParagraph.getAttribute('class'), 'accent', 'M02: the attribute should bind before the error.');
+failingClass$.error(new Error('attribute stream failed'));
+assertEqual(
+  attrErrorParagraph.getAttribute('class'),
+  null,
+  'M02: an erroring attribute binding must remove the stale attribute.',
+);
+assertEqual(attributeErrors.length, 1, 'M02: the mount onError hook should receive the attribute error.');
+attrErrorLifetime.unsubscribe();
+
 // M02/M05: client-side navigation — the router state stream is the live view
 // source, and nav link clicks flow through the dataflow into the router.
 const shell = createTodosShell();
