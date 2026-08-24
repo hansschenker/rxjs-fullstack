@@ -1,4 +1,4 @@
-import type { Observable, Observer } from 'rxjs';
+import type { Observable } from 'rxjs';
 
 export type PrimitiveView = string | number | boolean | null | undefined;
 
@@ -18,8 +18,17 @@ export type ViewNode = ElementNode | FragmentNode;
 
 export type ViewChild = PrimitiveView | ViewNode | Observable<unknown> | readonly ViewChild[];
 
+/**
+ * Minimal push boundary used by DOM events. The renderer only ever forwards
+ * event packages with `next`; error and completion do not belong to DOM event
+ * sources.
+ */
+export interface EventSink<T> {
+  next(value: T): void;
+}
+
 export type EventObservers = Partial<{
-  [K in keyof GlobalEventHandlersEventMap]: Observer<GlobalEventHandlersEventMap[K]>;
+  [K in keyof GlobalEventHandlersEventMap]: EventSink<GlobalEventHandlersEventMap[K]>;
 }>;
 
 type Bindable<T> = T | Observable<unknown>;
@@ -64,7 +73,13 @@ export type ElementProps = KnownHtmlAttributes &
     readonly on?: EventObservers;
   };
 
-export type Component<Props extends object = Record<string, never>> = (
+/**
+ * Low-level TypeScript JSX function component. This is the generic
+ * `Props -> ViewChild` primitive used by the JSX runtime. Application
+ * components should normally use `Component<Model, Message>` from
+ * `../component` instead.
+ */
+export type JsxComponent<Props extends object = Record<string, never>> = (
   props: Props & { readonly children?: readonly ViewChild[] },
 ) => ViewChild;
 
@@ -72,7 +87,7 @@ export const Fragment = Symbol('RxJSFullstack.Fragment');
 
 export type JsxType<Props extends object = Record<string, never>> =
   | string
-  | Component<Props>
+  | JsxComponent<Props>
   | typeof Fragment;
 
 const flattenChildren = (children: readonly unknown[]): ViewChild[] => {

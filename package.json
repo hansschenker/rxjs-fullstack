@@ -15,6 +15,7 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"scripts/**/*.{ts,tsx}\" \"*.json\"",
     "verify": "bun run generate:routes && bun run scripts/verify.tsx",
     "verify:dom": "bun run scripts/verify-dom.tsx",
+    "verify:components": "bun run scripts/verify-components.tsx",
     "verify:database": "bun run scripts/verify-database.ts",
     "verify:auth": "bun run scripts/verify-auth.ts",
     "verify:streaming": "bun run scripts/verify-streaming.ts",
@@ -25,7 +26,7 @@
     "verify:runtimes": "bun run scripts/verify-runtimes.ts",
     "build:todos": "bun build src/examples/todos-client.tsx --outdir dist/client --target browser",
     "dev:todos": "bun run build:todos && bun run scripts/serve-todos.ts",
-    "check": "bun run format:check && bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run scripts/verify-dom.tsx && bun run verify:database && bun run verify:auth && bun run verify:streaming && bun run scripts/generate-static.ts && bun run scripts/verify-static.ts && bun run build:node && bun run build:worker && bun run verify:runtimes && bun run build:todos"
+    "check": "bun run format:check && bun run generate:routes && tsc --noEmit && bun run scripts/verify.tsx && bun run scripts/verify-dom.tsx && bun run verify:components && bun run verify:database && bun run verify:auth && bun run verify:streaming && bun run scripts/generate-static.ts && bun run scripts/verify-static.ts && bun run build:node && bun run build:worker && bun run verify:runtimes && bun run build:todos"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.5",

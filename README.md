@@ -11,6 +11,7 @@ The framework deliberately leaves existing technologies in charge of the jobs th
 - **TypeScript** — language, strong typing, and JSX compilation.
 - **RxJS 7** — lazy dataflows, state, effects, cancellation, sharing, and Query/Cache.
 - **TypeScript JSX** — view syntax without React.
+- **Functional Component Algebra** — typed composition of `Component<Model, Message>` application views.
 - **rxjs-router** — strongly typed route matching, navigation, request resolution, and route data.
 - **Hono** — Web-API HTTP layer.
 - **Bun** — reference development runtime and build tool.
@@ -36,6 +37,7 @@ M10  Runtime Adapters                             ✅
 M11  Database Integration                         ✅
 M12  Authentication                               ✅
 M13  Streaming / Advanced SSR                     ✅
+M14  Functional Component Algebra                 ✅
 ```
 
 ## M01 — TypeScript JSX runtime
@@ -4188,7 +4190,443 @@ ordered HTML chunks over a Web ReadableStream
 
 That is the larger M13 result: **RxJS can own temporal server rendering while the renderer remains pure and the Web platform owns transport.**
 
-## What M01–M13 establish
+## M14 — Functional Component Algebra
+
+M14 adds the structural counterpart to the RxJS execution model: a small typed algebra for composing application views from `Model` values and outward `Message` values.
+
+The M01 JSX runtime remains the foundation. Its general function-component abstraction is now named `JsxComponent<Props>`:
+
+```ts
+type JsxComponent<Props> =
+  (props: Props & { readonly children?: readonly ViewChild[] }) => ViewChild;
+```
+
+M14 promotes the application-level default to:
+
+```ts
+interface MessageSink<Message> {
+  next(message: Message): void;
+}
+
+interface ComponentProps<Model, Message> {
+  readonly model: Model;
+  readonly messages: MessageSink<Message>;
+}
+
+type Component<Model, Message> =
+  JsxComponent<ComponentProps<Model, Message>>;
+```
+
+The relationship is intentionally one-way:
+
+```text
+Component<Model, Message>
+        IS A
+JsxComponent<ComponentProps<Model, Message>>
+```
+
+`JsxComponent<Props>` remains useful for low-level JSX helpers and composition roots. `Component<Model, Message>` is the canonical application component when a view consumes domain/application model data and can emit application messages.
+
+M14 does not introduce a second renderer, a component instance model, lifecycle methods, hidden state, or a React-style runtime. Both abstractions still return the same framework `ViewChild` values.
+
+### A component receives data and emits messages
+
+The application component boundary is:
+
+```text
+             Model
+               │
+               ▼
+     Component<Model, Message>
+               │
+       ┌───────┴────────┐
+       ▼                ▼
+    ViewChild         Message
+       │                │
+       ▼                ▼
+      JSX             RxJS
+```
+
+A component can describe the current view and push a message through `MessageSink<Message>`. It does not decide subscription lifetime, effect execution, concurrency, cancellation, scheduling, Query/Cache policy, or server-action policy.
+
+An RxJS `Subject<Message>` is structurally compatible with `MessageSink<Message>`, so the application composition root can connect the component message boundary directly to an RxJS source without making the component algebra itself own Subject creation.
+
+### DOM event bindings use the same minimal push contract
+
+Before M14, `EventObservers` required a full RxJS `Observer<Event>` even though the DOM renderer only ever called `next(event)`.
+
+M14 narrows that contract to:
+
+```ts
+interface EventSink<T> {
+  next(value: T): void;
+}
+```
+
+The renderer still does exactly one thing:
+
+```text
+DOM event
+   ↓
+EventSink.next(event)
+```
+
+This makes the boundary more precise and lets a `MessageSink` participate naturally in JSX event bindings when the event type matches. RxJS Subjects remain compatible because they also expose `next`.
+
+### The initial Component Algebra is deliberately small
+
+The implementation lives in `src/component.ts` and begins with four compositional operations.
+
+#### `mapModel`
+
+`mapModel` lets a component that understands a smaller model participate in a larger model:
+
+```text
+Component<InnerModel, Message>
+          │
+          │ mapModel(select)
+          ▼
+Component<OuterModel, Message>
+```
+
+The selector is an ordinary pure application/domain function:
+
+```ts
+const selectTodos = (model: TodosModel): readonly Todo[] =>
+  model.todos;
+```
+
+The combinator only rewires the model boundary. It does not hide domain meaning inside a new component mechanism.
+
+#### `mapMessage`
+
+`mapMessage` lifts a child component's local message vocabulary into the containing application vocabulary:
+
+```text
+Component<Model, InnerMessage>
+          │
+          │ mapMessage(project)
+          ▼
+Component<Model, OuterMessage>
+```
+
+For example:
+
+```text
+SubmitEvent
+    │
+    │ toSubmitTodoMessage
+    ▼
+TodoMessage
+```
+
+Again, the application meaning lives in the named function passed to the combinator.
+
+#### `mapMessageWithModel`
+
+Some outward messages need both the local message and the current model—for example, an item-local edit that must carry the item's id.
+
+```text
+InnerMessage + Model
+        │
+        │ project
+        ▼
+   OuterMessage
+```
+
+`mapMessageWithModel` performs that lift while leaving the component's view unchanged.
+
+#### `list`
+
+`list` lifts one item component over a readonly collection:
+
+```text
+Component<Item, Message>
+          │
+          │ list
+          ▼
+Component<readonly Item[], Message>
+```
+
+It preserves collection order and renders one child for every item. Collection semantics remain ordinary model/domain data; the combinator does not add state or time.
+
+### Component Algebra and RxJS Operator Algebra are complementary
+
+M14 makes an important symmetry explicit.
+
+The Component Algebra composes view structure:
+
+```text
+Component<A, X>
+      │
+      │ mapModel
+      ▼
+Component<B, X>
+```
+
+The RxJS Operator Algebra composes values moving through time:
+
+```text
+Observable<A>
+      │
+      │ map
+      ▼
+Observable<B>
+```
+
+Likewise, `mapMessage` rewires the outward package vocabulary of a component while RxJS operators rewire packages flowing through a dataflow.
+
+They operate on different dimensions:
+
+```text
+Component Algebra   = View Structure
+Domain Functions    = Application Meaning
+RxJS Operator Algebra = Workflow / Dataflow through Time
+```
+
+This gives `rxjs-fullstack` a compact architectural vocabulary:
+
+```text
+JSX    = View
+Domain = Meaning
+RxJS   = Flow
+```
+
+### The Todos vertical slice is the executable proof
+
+The M14 proof deliberately refactors the existing Todos example rather than creating an isolated toy.
+
+One Todo starts as:
+
+```text
+TodoItem
+Component<Todo, never>
+```
+
+`list(TodoItem)` lifts that component over `readonly Todo[]`. `mapModel(selectTodos)` then lets the result consume `TodosModel`:
+
+```text
+Component<Todo, never>
+        │
+        │ list
+        ▼
+Component<readonly Todo[], never>
+        │
+        │ mapModel(selectTodos)
+        ▼
+Component<TodosModel, never>
+```
+
+`TodoList` adds the `<ul>` JSX structure around the composed item views without changing the model/message protocol.
+
+The form proves message composition in the opposite direction.
+
+The primitive form component emits the browser event package:
+
+```text
+SubmitTodoForm
+Component<void, SubmitEvent>
+```
+
+`mapMessage(toSubmitTodoMessage)` lifts that into:
+
+```text
+TodoForm
+Component<void, TodoMessage>
+```
+
+The component still does not execute a Todo creation.
+
+### RxJS remains the workflow engine
+
+The application root creates the temporal source:
+
+```ts
+const messages$ = new Subject<TodoMessage>();
+```
+
+The RxJS pipeline remains explicit:
+
+```text
+messages$
+   ↓
+filter(isSubmitTodoMessage)
+   ↓
+map(message => message.event)
+   ↓
+tap(preventFormNavigation)
+   ↓
+exhaustMap(...)
+   ↓
+createTodo$ server action
+   ↓
+concatMap(query invalidation)
+```
+
+Nothing about M14 changes the M07 concurrency semantics:
+
+```text
+exhaustMap = ignore while busy
+```
+
+Nothing changes the read ownership established by M05/M08:
+
+```text
+Query/Cache owns cached server reads
+```
+
+Nothing changes the server-action execution model:
+
+```text
+cold Observable
+subscription starts request
+the Subscription owns cancellation
+```
+
+The Component Algebra describes view structure and emits typed messages. RxJS decides what those messages do over time.
+
+### Domain functions remain visible between the two algebras
+
+M14 follows the same rule already used throughout the project: **do not rename mechanisms merely to give them domain names. Name the domain/application functions used by the mechanism.**
+
+For the Todo form:
+
+```ts
+mapMessage(toSubmitTodoMessage)(SubmitTodoForm)
+```
+
+The combinator stays visible. The application meaning is in `toSubmitTodoMessage`.
+
+For the workflow:
+
+```ts
+messages$.pipe(
+  filter(isSubmitTodoMessage),
+  map((message) => message.event),
+  tap(preventFormNavigation),
+  exhaustMap(...),
+)
+```
+
+The RxJS mechanisms stay visible. Meaning is supplied by ordinary functions and domain packages.
+
+This keeps both algebras inspectable and compositional.
+
+### Low-level JSX components remain useful
+
+M14 does not force every JSX function into a model/message protocol.
+
+A static logo, field fragment, page wrapper, or workflow composition root may still be:
+
+```text
+JsxComponent<Props>
+```
+
+Application views that participate in the model/message algebra use:
+
+```text
+Component<Model, Message>
+```
+
+Both can appear in the same JSX tree because both produce `ViewChild`.
+
+The current Todo workflow root remains a `JsxComponent`: it creates the `Subject<TodoMessage>`, Query/Cache streams, and workflow Observables, then connects them to the application components. This makes the boundary visible rather than hiding RxJS resource creation inside every component.
+
+### Existing renderers do not change
+
+The key compatibility invariant is:
+
+```text
+JsxComponent<Props> ───────────────┐
+                                   ├──► ViewChild
+Component<Model, Message> ─────────┘
+```
+
+Everything after `ViewChild` is still the M01–M13 machinery:
+
+```text
+ViewChild
+   ├── DOM mount / RxJS bindings
+   ├── pure renderToString()
+   ├── buffered SSR
+   ├── progressive SSR
+   └── SSG
+```
+
+No renderer needs to know whether the view was produced by a generic JSX helper or by the Component Algebra.
+
+This is why M14 can become the default application component model without breaking the framework's rendering stack.
+
+### M14 source map
+
+```text
+src/jsx/runtime.ts
+  JsxComponent<Props>
+  EventSink<Event>
+  unchanged ViewChild representation
+
+src/component.ts
+  MessageSink<Message>
+  ComponentProps<Model, Message>
+  Component<Model, Message>
+  mapModel()
+  mapMessage()
+  mapMessageWithModel()
+  list()
+
+src/examples/todos.tsx
+  TodoItem and TodoList component composition
+  SubmitTodoForm → TodoMessage composition
+  messages$ workflow boundary
+  visible RxJS concurrency/effect pipeline
+
+scripts/verify-components.tsx
+  mapModel verification
+  mapMessage verification
+  mapMessageWithModel verification
+  list ordering/shape verification
+
+package.json
+  verify:components
+  M14 verification in the complete check gate
+```
+
+### M14 verification
+
+The dedicated verifier proves that:
+
+- `mapModel` projects an outer model into the child model while leaving the message channel intact,
+- `mapMessage` lifts a local message into an outer message vocabulary,
+- `mapMessageWithModel` constructs an outer message from both the local message and current model,
+- `list` produces one child for each model item and preserves order.
+
+The project-wide `bun run check` additionally reruns strict TypeScript, all earlier M01–M13 verifiers, SSR/SSG/runtime builds, and browser bundles.
+
+That project-wide gate is important: M14 is only successful if the new default application component abstraction composes with the existing framework rather than replacing its execution or rendering model.
+
+### What M14 establishes
+
+M14 gives the completed fullstack execution architecture a matching functional view-composition model:
+
+```text
+                         Domain Values
+                              │
+                  ┌───────────┴───────────┐
+                  ▼                       ▼
+         Component Algebra         RxJS Operator Algebra
+      Component<Model, Message>       Observable<A>
+                  │                       │
+                  ▼                       ▼
+           View Structure          Workflow / Dataflow
+                  │                       │
+                  └───────────┬───────────┘
+                              ▼
+                         Application
+```
+
+The broader M14 principle is: **JSX describes the view, domain functions provide application meaning, and RxJS is the workflow/dataflow engine.**
+
+## What M01–M14 establish
 
 ```text
 M01  JSX is a typed description of a view.
@@ -4204,15 +4642,25 @@ M10  Multiple runtimes host the same Web Request → Response application.
 M11  Persistent database effects enter through injected RxJS repository ports.
 M12  Server-side identity and sessions control route access without a client auth machine.
 M13  RxJS server values can be delivered progressively without changing the pure renderer.
+M14  Component algebra composes view structure while RxJS composes workflow through time.
 ```
 
 The completed architecture is:
 
 ```text
-TypeScript JSX
-      ↓
-framework ViewChild
-      ↓
+Domain types + pure functions
+      │
+      ├──────────────────────────────┐
+      │                              │
+      ▼                              ▼
+Component<Model, Message>      RxJS Operator Algebra
+      │                              │
+      │ JSX structure                │ workflow/dataflow
+      ▼                              │
+framework ViewChild                  │
+      │                              │
+      └──────────────┬───────────────┘
+                     ▼
 file-discovered rxjs-router tree
       ↓
 request/build route context
@@ -4258,12 +4706,12 @@ browser side
       ↓
 HttpOnly opaque session cookie + CSRF companion cookie
       ↓
-Query/Cache hydration + DOM bindings + application form/action dataflows
+Query/Cache hydration + Component<Model, Message> + DOM bindings
       ↓
-RxJS Subscription-owned execution
+RxJS Subscription-owned workflow/dataflow execution
 ```
 
-The original M01–M13 implementation roadmap is now complete.
+The original M01–M13 implementation roadmap remains intact; M14 adds the canonical functional application-component model on top of that completed fullstack execution stack.
 
 ## Run
 
@@ -4309,7 +4757,15 @@ DATABASE_PATH=./data/dev-postgres bun run dev:bun
 bun run dev:todos
 ```
 
-This builds `dist/client/todos-client.js` and serves it on `http://localhost:3100` from a minimal mount page, with the same Hono application handling `/api` and `/api/actions` on that origin. The sample mounts a router-driven shell (`src/examples/todos-shell.tsx`): `router.state$` is the live view source, and nav link clicks flow through an RxJS dataflow into `router.navigateHref()`, so Home, About, Counter, Todos, and Hello navigate client-side without page reloads. The Todos page drives its data through the M05 Query/Cache layer and the M07 create-todo server action. The harness serves the mount page on those page routes too, so deep links and reloads stay in the client app.
+This builds `dist/client/todos-client.js` and serves it on `http://localhost:3100` from a minimal mount page, with the same Hono application handling `/api` and `/api/actions` on that origin. The sample mounts a router-driven shell (`src/examples/todos-shell.tsx`): `router.state$` is the live view source, and nav link clicks flow through an RxJS dataflow into `router.navigateHref()`, so Home, About, Counter, Todos, and Hello navigate client-side without page reloads. The Todos page composes its application view with M14 `Component<Model, Message>` values, drives reads through the M05 Query/Cache layer, and runs the M07 create-todo workflow through visible RxJS operators. The harness serves the mount page on those page routes too, so deep links and reloads stay in the client app.
+
+### Component Algebra verification
+
+```sh
+bun run verify:components
+```
+
+This verifies the core `mapModel`, `mapMessage`, `mapMessageWithModel`, and `list` composition behavior exercised by the M14 implementation.
 
 ### Node.js runtime
 
@@ -4412,4 +4868,4 @@ See [`CONTRIBUTORS.md`](./CONTRIBUTORS.md) for the project contributor list.
 
 ## Architectural rule
 
-The project should add only coordination that the underlying technologies do not already provide. RxJS remains visible as the application machine; JSX is view syntax, `rxjs-router` owns routing semantics, Hono owns HTTP and response delivery, repository ports own persistence contracts, authentication is resolved server-side before protected routing, Web Streams own progressive byte transport, runtime composition roots select concrete dependencies, and Bun remains the reference development/build tool rather than framework semantics.
+The project should add only coordination that the underlying technologies do not already provide. `Component<Model, Message>` composes application view structure, RxJS remains visible as the workflow/dataflow machine, domain functions carry application meaning, JSX produces framework `ViewChild` values, `rxjs-router` owns routing semantics, Hono owns HTTP and response delivery, repository ports own persistence contracts, authentication is resolved server-side before protected routing, Web Streams own progressive byte transport, runtime composition roots select concrete dependencies, and Bun remains the reference development/build tool rather than framework semantics.
