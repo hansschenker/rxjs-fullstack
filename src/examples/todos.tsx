@@ -1,12 +1,6 @@
 import { Subject, catchError, concatMap, exhaustMap, filter, map, of, startWith, tap } from 'rxjs';
 
-import {
-  list,
-  mapMessage,
-  mapModel,
-  type Component,
-  type MessageSink,
-} from '../component';
+import { list, mapMessage, mapModel, type Component, type MessageSink } from '../component';
 import { createTodoInput, type CreateTodoInput } from '../domain/todos';
 import type { JsxComponent } from '../jsx/runtime';
 import { QueryClient } from '../query';

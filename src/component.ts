@@ -26,9 +26,7 @@ export type Component<Model, Message> = JsxComponent<ComponentProps<Model, Messa
 /** Lift a component that reads an inner model so it can read a larger model. */
 export const mapModel =
   <OuterModel, InnerModel>(select: (model: OuterModel) => InnerModel) =>
-  <Message>(
-    component: Component<InnerModel, Message>,
-  ): Component<OuterModel, Message> =>
+  <Message>(component: Component<InnerModel, Message>): Component<OuterModel, Message> =>
   ({ model, messages }) =>
     component({
       model: select(model),
@@ -71,9 +69,7 @@ export const mapMessageWithModel =
  * semantics remain ordinary domain data.
  */
 export const list =
-  <Model, Message>(
-    component: Component<Model, Message>,
-  ): Component<readonly Model[], Message> =>
+  <Model, Message>(component: Component<Model, Message>): Component<readonly Model[], Message> =>
   ({ model, messages }) =>
     model.map((item) =>
       component({

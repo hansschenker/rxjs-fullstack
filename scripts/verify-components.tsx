@@ -1,10 +1,4 @@
-import {
-  list,
-  mapMessage,
-  mapModel,
-  type Component,
-  type MessageSink,
-} from '../src/component';
+import { list, mapMessage, mapModel, type Component, type MessageSink } from '../src/component';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
