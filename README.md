@@ -3340,7 +3340,19 @@ When the application needs authoritative identity, it asks the server either by 
 GET /auth/session
 ```
 
-That endpoint returns only the current user or `null`; the session itself remains server-side.
+That endpoint returns only:
+
+```json
+{ "user": { "id": 1, "email": "..." } }
+```
+
+or:
+
+```json
+{ "user": null }
+```
+
+The session itself remains server-side.
 
 ### M12 source map
 
@@ -3427,9 +3439,79 @@ scripts/verify-runtimes.ts
 
 The dedicated authentication verifier treats the security and execution model as executable requirements.
 
-It proves that authentication operations are cold, passwords are stored only as salted PBKDF2 derivations, opaque server-side sessions are hashed before persistence, cookies carry the expected security attributes, cross-site mutations and bad CSRF logout attempts are rejected, protected routes require a valid server-resolved session, logout revokes that session, and PGlite users/sessions survive database reopen.
+It proves that:
 
-The actual runtime verifier additionally starts the real Node bundle with a temporary PGlite database and proves registration, login, cookie handling, and authenticated `/account/profile` SSR end to end.
+- constructing `register$()` does not create a user before subscription,
+- subscribing creates the user,
+- the stored password value is not plaintext,
+- the stored password record is a salted PBKDF2 derivation,
+- the production PBKDF2 policy remains 600,000 iterations,
+- a wrong password does not create a session,
+- opaque session tokens contain 32 bytes of random input before encoding,
+- the repository stores the session hash rather than the bearer token,
+- an anonymous request to `/account/profile` redirects to `/login`,
+- registration follows POST/redirect/GET,
+- an explicit cross-site login request receives HTTP `403`,
+- successful login redirects to `/account/profile`,
+- login sets both the session and CSRF cookies,
+- the session cookie is `HttpOnly` and `SameSite=Strict`,
+- the CSRF cookie is `SameSite=Strict` and intentionally not `HttpOnly`,
+- HTTPS login marks auth cookies `Secure`,
+- `/auth/session` resolves the authenticated user,
+- protected SSR receives the authenticated email,
+- protected SSR renders the session-bound CSRF value into the logout form,
+- a bad logout CSRF value receives HTTP `403`,
+- a valid logout revokes the server-side session,
+- the old cookie cannot authorize the account route after revocation,
+- PGlite users and sessions survive database close/reopen.
+
+The actual runtime verifier additionally starts:
+
+```text
+node dist/runtime/node.js
+```
+
+with a temporary PGlite database and proves:
+
+```text
+register user
+    ↓
+login user
+    ↓
+receive id + csrf cookies
+    ↓
+GET /account/profile with cookies
+    ↓
+200 protected SSR containing persisted user email
+```
+
+This confirms that the authentication model survives the real M10 runtime and M11 persistence composition, not only the in-process verifier.
+
+The final acceptance pipeline is now:
+
+```text
+route generation
+      ↓
+strict TypeScript
+      ↓
+M01-M12 executable verification
+      ↓
+M11 database verification
+      ↓
+M12 authentication verification
+      ↓
+static generation of public concrete routes
+      ↓
+static artifact verification
+      ↓
+Node runtime build
+      ↓
+edge/Worker build
+      ↓
+real Node + database + authentication verification
+      ↓
+browser client bundles
+```
 
 ### What M12 establishes
 
@@ -3457,25 +3539,505 @@ resolved ViewChild
 pure SSR
 ```
 
+The responsibility map is:
+
+```text
+Web Crypto         password derivation + random tokens + token hashes
+AuthRepository     users and server-side sessions
+AuthService        authentication execution
+Hono               forms, cookies, redirects, HTTP/CSRF boundary
+rxjs-router        protected-route control flow
+ServerRouteContext resolved authenticated identity
+PGlite/Postgres    persistent reference implementation
+RxJS               lazy authentication effect execution
+```
+
 The broader M12 principle is: **authentication changes who may execute a route; it does not change the RxJS machine that executes the application.**
 
 ## M13 — Streaming / Advanced SSR
 
 M13 completes the original roadmap by adding progressive HTML delivery without adding a second rendering or execution model.
 
-Before M13, request-time SSR always waited until a complete page could be serialized into one HTML string. M13 adds a second delivery policy for pages whose server work can be usefully revealed in phases while preserving buffered SSR and SSG.
+Before M13, request-time SSR always waited until a complete page could be serialized into one HTML string:
 
-The page contract gains an optional `stream$: Observable<ViewChild>`. The existing `view` remains the immediately available server representation; `stream$` describes later complete ViewChild chunks. The route declares progressive values but does not write bytes or own `ReadableStream`.
+```text
+HTTP request
+    ↓
+route loaders
+    ↓
+all required server work resolves
+    ↓
+renderToString()
+    ↓
+complete HTML string
+    ↓
+Response
+```
 
-M03's renderer rule remains unchanged: `renderToString()` still never subscribes. Each stream emission is first resolved by RxJS, then passed as a plain `ViewChild` to the pure renderer.
+That model remains valuable and is still used for ordinary pages and static generation. M13 adds a second **delivery policy** for pages whose server work can be usefully revealed in phases:
 
-`renderDocumentStream()` translates rendered strings to a Web `ReadableStream<Uint8Array>`, and `renderRouteResponse()` chooses buffered or progressive response delivery after the route has been resolved. The same route tree, loaders, QueryClient, JSX representation, and renderer are reused.
+```text
+HTTP request
+    ↓
+route loader
+    ↓
+resolved shell ViewChild
+    ↓
+HTML document starts
+    ↓
+stream$: Observable<ViewChild>
+    ↓
+resolved chunk → renderToString() → response bytes
+    ↓
+resolved chunk → renderToString() → response bytes
+    ↓
+stream completes
+    ↓
+final Query/Cache bootstrap + document close
+```
 
-The `/streaming` proof route emits an immediate shell, an intermediate timed chunk, and a final Query/Cache-backed Todo chunk. Query state is dehydrated only after the stream completes so the final HTML contains cache state produced by the entire streamed server execution.
+The central M13 rule is: **streaming changes when rendered HTML is delivered; it does not change who owns execution or how JSX is rendered.**
 
-Cancellation preserves RxJS ownership: cancelling the Web response body unsubscribes the body Observable. Post-start errors cannot change the already-committed HTTP status, so they are rendered as a generic in-band failure fragment without leaking internal exception details.
+### PageData gains an optional progressive body source
 
-The same route is progressive at request time and buffered during SSG. M13 therefore changes delivery timing rather than creating a second page implementation.
+The page contract now supports:
+
+```ts
+interface PageData {
+  readonly title: string;
+  readonly view: ViewChild;
+  readonly stream$?: Observable<ViewChild>;
+}
+```
+
+The existing `view` remains the page's immediately available server representation.
+
+When `stream$` is absent:
+
+```text
+PageData
+  ↓
+ordinary buffered SSR
+```
+
+When `stream$` is present:
+
+```text
+PageData.view       → initial shell
+PageData.stream$    → later complete ViewChild chunks
+```
+
+The route therefore declares that progressive server values exist, but it does not write bytes or know about `ReadableStream`.
+
+### M03's pure renderer remains unchanged
+
+M13 deliberately does **not** teach `renderToString()` how to subscribe to an Observable.
+
+Every streamed emission still follows the M03 rule:
+
+```text
+Observable<ViewChild>
+      ↓
+RxJS subscription owns execution
+      ↓
+resolved ViewChild
+      ↓
+pure renderToString()
+      ↓
+HTML string
+```
+
+If an Observable itself reaches `renderToString()`, it is still rejected exactly as before.
+
+This is one of the most important M13 invariants: **streaming belongs outside the pure renderer.**
+
+### The HTML document is split into stable framing and progressive body chunks
+
+`src/render/html.ts` now exposes the document framing that was previously assembled in one function:
+
+```text
+renderDocumentPrefix()
+renderDocumentSuffix()
+```
+
+Buffered rendering remains:
+
+```text
+prefix + complete body + suffix
+```
+
+Streaming rendering becomes:
+
+```text
+prefix + initial body
+        ↓
+     chunk 1
+        ↓
+     chunk 2
+        ↓
+     ...
+        ↓
+final bootstrap scripts + suffix
+```
+
+Each chunk is a complete rendered sibling fragment. M13 does not stream half-open JSX elements or ask the pure renderer to maintain hidden element state across chunks.
+
+### Web ReadableStream owns byte delivery
+
+`renderDocumentStream()` translates rendered HTML strings into a standard Web `ReadableStream<Uint8Array>`.
+
+Its responsibility is deliberately narrow:
+
+```text
+HTML strings
+    ↓
+TextEncoder
+    ↓
+Uint8Array chunks
+    ↓
+ReadableStream
+```
+
+The stream writer does not know route matching, Todo semantics, authentication, Query/Cache policy, or browser DOM bindings.
+
+This keeps the M10 portability boundary intact: Bun, Node.js, and fetch-native runtimes can host the same Web response body shape.
+
+### Request-time rendering now distinguishes page resolution from delivery
+
+M13 factors the page path into one route-resolution plan and two consumers.
+
+Buffered consumer:
+
+```text
+resolve route once
+      ↓
+PageData
+      ↓
+collect stream$ if present
+      ↓
+render complete document
+      ↓
+RouteDocumentResult.page
+```
+
+Request-time consumer:
+
+```text
+resolve route once
+      ↓
+PageData
+      ↓
+stream$ present?
+   ├── no  → buffered page response
+   └── yes → Web ReadableStream response
+```
+
+The new request-time entry is `renderRouteResponse()`.
+
+The existing `renderRouteDocument()` remains the buffered contract used by M09 SSG and other callers that need one complete HTML document.
+
+There is still one route tree, one set of loaders, one QueryClient, and one JSX renderer.
+
+### The `/streaming` route is the M13 proof
+
+M13 adds one concrete route whose server output has three observable phases:
+
+```text
+GET /streaming
+      ↓
+streaming-shell
+      ↓
+streaming-progress
+      ↓
+streaming-todos
+      ↓
+rxjs-query-state
+      ↓
+</body></html>
+```
+
+The first phase is available immediately:
+
+```text
+<header id="streaming-shell">
+  ... shell content ...
+</header>
+```
+
+The later phases are described by a cold RxJS `stream$`.
+
+An intermediate timer-backed emission proves that the response remains open while more server work is pending. The final phase waits for the normal request-scoped Todos Query/Cache read and renders the resulting Todo snapshot.
+
+### The streaming timeline makes the delivery distinction visible
+
+Conceptually:
+
+```text
+time ─────────────────────────────────────────────────────►
+
+HTTP response     open────────────────────────────────close
+
+shell             ●
+                  │
+progress                 ●
+                         │
+Todos query              │──── request / resolve ────●
+                                                    │
+Todo HTML                                            ●
+                                                    │
+query bootstrap                                      ●
+                                                    │
+document close                                        ●
+```
+
+The important observation is that the shell is delivered before the query-backed Todo chunk exists.
+
+The route does not wait for the entire server computation merely to begin the response.
+
+### Query/Cache remains the owner of the streamed read
+
+The final streamed Todo phase does not call a database adapter directly.
+
+It still follows the established M08/M11 read path:
+
+```text
+streaming route
+      ↓
+queryClient.query$(createTodosQuery(fetch))
+      ↓
+GET /api/todos
+      ↓
+TodoRepository
+      ↓
+readonly Todo[]
+      ↓
+streamed TodoSnapshot
+```
+
+The streaming route changes delivery timing only. Query identity remains:
+
+```text
+['todos']
+```
+
+and the database remains behind the existing API/repository boundary.
+
+### Query/Cache dehydration moves to stream completion
+
+For an ordinary buffered page, Query/Cache can be dehydrated after the page's server reads are resolved and before the final HTML string is returned.
+
+For a streaming page, later chunks may themselves populate Query/Cache. Dehydrating at shell time would therefore serialize an incomplete cache.
+
+M13 waits until `stream$` completes:
+
+```text
+shell sent
+   ↓
+streamed query runs
+   ↓
+query result stored in QueryClient
+   ↓
+stream$ completes
+   ↓
+dehydrate(QueryClient)
+   ↓
+rxjs-query-state script
+   ↓
+document suffix
+```
+
+The final HTML therefore carries the query state produced by the full streamed server execution.
+
+This keeps M08's data-continuity model compatible with advanced SSR.
+
+### Cancellation tears down the RxJS streaming source
+
+The Web stream and the RxJS source have one explicit ownership connection:
+
+```text
+ReadableStream body
+       ↓ owns
+RxJS body subscription
+```
+
+If the consumer cancels the response body:
+
+```text
+reader.cancel()
+      ↓
+ReadableStream.cancel()
+      ↓
+subscription.unsubscribe()
+      ↓
+stream$ teardown
+```
+
+The M13 verifier constructs a delayed Observable with an explicit teardown and proves that cancelling the Web stream runs that teardown.
+
+The route also keeps the request `AbortSignal` in its RxJS pipeline with `takeUntil(...)`, preserving the request-lifetime rule established by earlier server milestones.
+
+As with database and Web Crypto effects, M13 does not claim that unsubscription can forcibly stop an already-entered Promise operation when the underlying API offers no cancellation primitive. What it guarantees is that RxJS ownership is released and no later stream emissions are delivered to the cancelled response.
+
+### Errors before and after the response starts are different
+
+Before a response starts, ordinary SSR failures can still become an HTTP error response:
+
+```text
+resolve/render failure
+      ↓
+HTTP 500
+```
+
+After the streaming response has emitted its first bytes, the status and headers are already committed. M13 therefore treats a later `stream$` error as an in-band document failure:
+
+```text
+stream already started
+      ↓
+stream$ error
+      ↓
+generic error fragment
+      ↓
+final bootstrap state
+      ↓
+close HTML document
+```
+
+The default fallback is intentionally generic:
+
+```html
+<section data-rxjs-stream-error="true">
+  <p>Streaming content failed.</p>
+</section>
+```
+
+Internal exception details are not rendered into the response.
+
+The verifier explicitly throws a message containing a sensitive test string and proves that the string never appears in streamed HTML.
+
+### Streaming response headers are an HTTP policy
+
+The Hono boundary translates a streaming result into a Web `Response` with:
+
+```text
+Content-Type: text/html; charset=UTF-8
+Content-Encoding: Identity
+Cache-Control: no-store
+```
+
+`Content-Type` states the actual response representation.
+
+`Content-Encoding: Identity` makes the progressive delivery intent explicit and avoids a compression layer becoming an accidental buffering boundary in runtimes where that can matter.
+
+`Cache-Control: no-store` prevents the partially time-dependent progressive response from being treated as a reusable complete page artifact by an intermediary cache.
+
+These headers belong to Hono/HTTP. They are not properties of `PageData` or RxJS.
+
+### M13 and M09 use the same streaming route differently
+
+The `/streaming` route is concrete, so M09's existing static route discovery automatically includes it.
+
+Request time:
+
+```text
+/streaming
+    ↓
+renderRouteResponse()
+    ↓
+ReadableStream
+    ↓
+progressive network HTML
+```
+
+Build time:
+
+```text
+/streaming
+    ↓
+renderRouteDocument()
+    ↓
+collect stream$ to completion
+    ↓
+complete HTML string
+    ↓
+dist/static/streaming/index.html
+```
+
+No route flag says "use a different implementation for SSG".
+
+The same `PageData`, QueryClient, route loader, stream Observable, and pure HTML renderer are reused. Only the consumer's delivery policy changes.
+
+### The automatic static set now contains seven pages
+
+With the new concrete route, M09 discovery produces:
+
+```text
+/
+/about
+/counter
+/login
+/register
+/streaming
+/todos
+```
+
+The protected parameterized route remains excluded:
+
+```text
+/account/$section
+```
+
+The static verifier proves that `/streaming` contains the shell, intermediate chunk, query-backed Todo chunk, and final dehydrated Todos query state in one finished document.
+
+### M13 is not DOM hydration or client Suspense
+
+Streaming HTML and DOM hydration solve different problems.
+
+M13 establishes:
+
+```text
+server can deliver complete HTML fragments progressively
+```
+
+It does not claim:
+
+```text
+browser attaches bindings to existing streamed DOM nodes in place
+```
+
+and it does not introduce a hidden Suspense/component scheduler.
+
+The emitted fragments are ordinary server HTML siblings. A future DOM-hydration feature could build on them, but that is deliberately outside the completed M01–M13 roadmap.
+
+This keeps the M08 distinction intact: Query/Cache data hydration exists; DOM hydration is still a separate concern.
+
+### M13 preserves runtime portability
+
+The streaming response uses Web Platform primitives:
+
+```text
+Response
+ReadableStream<Uint8Array>
+TextEncoder
+```
+
+The Node bundle and the fetch-native edge bundle both compile with the same implementation.
+
+The real Node verifier goes further than compilation: it starts the bundled application under the actual `node` executable and reads the response body incrementally.
+
+It proves:
+
+```text
+first network read
+    contains streaming-shell
+    does not contain streaming-todos
+
+later network reads
+    contain streaming-progress
+    contain streaming-todos
+    contain ['todos'] query bootstrap
+```
+
+So the progressive behavior survives the M10 Node transport bridge instead of existing only in an in-memory test.
 
 ### M13 source map
 
@@ -3484,43 +4046,117 @@ src/routes/types.ts
   optional stream$: Observable<ViewChild>
 
 src/render/html.ts
-  document prefix/suffix
+  renderDocumentPrefix()
+  renderDocumentSuffix()
   renderDocumentStream()
   Web stream cancellation → RxJS unsubscribe
   generic in-band stream error fallback
 
 src/render/page.ts
   shared route-resolution plan
-  buffered and request-time consumers
+  renderRouteDocument() buffered consumer
+  renderRouteResponse() request-time consumer
   final Query/Cache dehydration
 
 src/server/app.tsx
-  HTTP translation for streaming responses
+  HTTP translation for RouteResponseResult.stream
   streaming response headers
 
 src/routes/streaming.tsx
   shell
-  timed RxJS chunk
-  Query/Cache-backed Todo chunk
+  intermediate timed RxJS chunk
+  delayed Query/Cache-backed Todo chunk
   request AbortSignal integration
 
 scripts/verify-streaming.ts
-  early-shell, completion, query-state, cancellation, and error proofs
+  early-shell proof
+  complete-stream proof
+  Query/Cache final-state proof
+  cancellation teardown proof
+  in-band error proof
+  buffered rendering proof
 
 scripts/verify-static.ts
   complete generated /streaming artifact proof
 
 scripts/verify-runtimes.ts
   real Node network-stream proof
+
+package.json
+  verify:streaming
+  M13 integration in the complete check gate
 ```
 
 ### M13 verification
 
-M13 is verified at the in-process, static-artifact, and real-runtime boundaries. The checks prove early shell delivery, ordered later chunks, final dehydrated Todo query state, Web-stream cancellation tearing down the RxJS source, generic post-start error handling, complete buffered reuse for SSG, and the same progressive behavior through the actual Node HTTP adapter.
+M13 is verified at four different boundaries.
+
+The project-wide verifier proves that:
+
+- the running home page reports the M01–M13 vertical slice,
+- `/streaming` is part of the generated concrete route set,
+- `/streaming` remains eligible for automatic SSG,
+- all earlier routing, Query/Cache, server-action, database, and authentication contracts remain green.
+
+The dedicated streaming verifier proves that:
+
+- `GET /streaming` returns HTTP `200`,
+- the response body is a Web `ReadableStream`,
+- the response is HTML,
+- `Content-Encoding` is `Identity`,
+- the progressive response is `no-store`,
+- the first chunk contains the document prefix and `streaming-shell`,
+- the first chunk does not contain `streaming-todos`,
+- a later chunk contains `streaming-progress`,
+- a later chunk contains the query-backed Todo snapshot,
+- the completed stream contains `rxjs-query-state`,
+- the completed bootstrap contains the `['todos']` query identity,
+- a successful stream closes `</body></html>`,
+- buffered rendering of the same route collects every phase,
+- cancelling the Web stream unsubscribes the RxJS source,
+- a post-start error produces the generic in-band error fragment,
+- internal error details are not leaked,
+- the error path still closes the HTML document.
+
+The static artifact verifier proves that:
+
+- `dist/static/streaming/index.html` is generated,
+- it contains shell, progress, and Todo phases,
+- it contains the final dehydrated Todos query state.
+
+The runtime verifier proves that the same progressive behavior survives the actual Node process and HTTP adapter.
+
+The complete acceptance pipeline is now:
+
+```text
+route generation
+      ↓
+strict TypeScript
+      ↓
+M01-M13 executable verification
+      ↓
+M11 database verification
+      ↓
+M12 authentication verification
+      ↓
+M13 streaming SSR verification
+      ↓
+static generation of seven concrete routes
+      ↓
+M09-M13 static artifact verification
+      ↓
+Node runtime build
+      ↓
+edge/Worker build
+      ↓
+real Node + database + auth + streaming verification
+      ↓
+browser client bundles
+```
 
 ### What M13 establishes
 
-M13 adds the final delivery dimension to the original roadmap:
+M13 adds the final delivery dimension to the project architecture:
 
 ```text
                             ┌── buffered request-time SSR
@@ -3528,26 +4164,49 @@ route/data/JSX/rendering ───┼── progressive request-time SSR
                             └── buffered build-time SSG
 ```
 
-Only delivery policy changes. **RxJS can own temporal server rendering while the renderer remains pure and the Web platform owns transport.**
+The application machine above those consumers stays stable:
+
+```text
+rxjs-router
+    ↓
+route loaders
+    ↓
+RxJS execution
+    ↓
+Query/Cache / actions / repositories / auth
+    ↓
+resolved ViewChild values
+    ↓
+pure renderToString()
+```
+
+Only the delivery policy changes:
+
+```text
+one complete HTML string
+        or
+ordered HTML chunks over a Web ReadableStream
+```
+
+That is the larger M13 result: **RxJS can own temporal server rendering while the renderer remains pure and the Web platform owns transport.**
 
 ## M14 — Functional Component Algebra
 
-M14 makes functional component composition the default application-level view model of `rxjs-fullstack` while preserving the low-level JSX machinery established by M01.
+M14 adds the structural counterpart to the RxJS execution model: a small typed algebra for composing application views from `Model` values and outward `Message` values.
 
-Before M14, the JSX runtime exposed one generic function-component type:
-
-```text
-Component<Props>
-      │
-      ▼
-   ViewChild
-```
-
-That representation is useful as a JSX implementation primitive, but it says very little about the architecture of an application. M14 therefore gives the two responsibilities distinct names:
+The M01 JSX runtime remains the foundation. Its general function-component abstraction is now named `JsxComponent<Props>`:
 
 ```ts
 type JsxComponent<Props> =
   (props: Props & { readonly children?: readonly ViewChild[] }) => ViewChild;
+```
+
+M14 promotes the application-level default to:
+
+```ts
+interface MessageSink<Message> {
+  next(message: Message): void;
+}
 
 interface ComponentProps<Model, Message> {
   readonly model: Model;
@@ -3558,9 +4217,7 @@ type Component<Model, Message> =
   JsxComponent<ComponentProps<Model, Message>>;
 ```
 
-`JsxComponent<Props>` is now the low-level `Props → ViewChild` primitive understood by the JSX runtime. `Component<Model, Message>` is the canonical application component: it receives current model data, may emit application messages, and produces the exact same `ViewChild` representation consumed by the existing DOM, HTML, SSR, SSG, and streaming renderers.
-
-The important relationship is:
+The relationship is intentionally one-way:
 
 ```text
 Component<Model, Message>
@@ -3568,37 +4225,61 @@ Component<Model, Message>
 JsxComponent<ComponentProps<Model, Message>>
 ```
 
-M14 is therefore primarily an architectural/type-level promotion, not a second component runtime.
+`JsxComponent<Props>` remains useful for low-level JSX helpers and composition roots. `Component<Model, Message>` is the canonical application component when a view consumes domain/application model data and can emit application messages.
 
-### Components have a one-way message boundary
+M14 does not introduce a second renderer, a component instance model, lifecycle methods, hidden state, or a React-style runtime. Both abstractions still return the same framework `ViewChild` values.
 
-Application components receive a minimal sink:
+### A component receives data and emits messages
+
+The application component boundary is:
+
+```text
+             Model
+               │
+               ▼
+     Component<Model, Message>
+               │
+       ┌───────┴────────┐
+       ▼                ▼
+    ViewChild         Message
+       │                │
+       ▼                ▼
+      JSX             RxJS
+```
+
+A component can describe the current view and push a message through `MessageSink<Message>`. It does not decide subscription lifetime, effect execution, concurrency, cancellation, scheduling, Query/Cache policy, or server-action policy.
+
+An RxJS `Subject<Message>` is structurally compatible with `MessageSink<Message>`, so the application composition root can connect the component message boundary directly to an RxJS source without making the component algebra itself own Subject creation.
+
+### DOM event bindings use the same minimal push contract
+
+Before M14, `EventObservers` required a full RxJS `Observer<Event>` even though the DOM renderer only ever called `next(event)`.
+
+M14 narrows that contract to:
 
 ```ts
-interface MessageSink<Message> {
-  next(message: Message): void;
+interface EventSink<T> {
+  next(value: T): void;
 }
 ```
 
-A component may push a message outward. It does not own RxJS error/completion channels, subscription policy, effect execution, concurrency, or cancellation.
-
-An RxJS `Subject<Message>` is structurally compatible with this boundary, so the workflow composition root can connect a component directly to an RxJS source without coupling the component algebra itself to Subject construction.
-
-M14 applies the same precision to DOM events. The JSX runtime's event type is narrowed from a full RxJS `Observer<Event>` to the `next`-only `EventSink<Event>` contract the renderer actually uses. The renderer still performs the same operation:
+The renderer still does exactly one thing:
 
 ```text
 DOM event
    ↓
-observer.next(event)
+EventSink.next(event)
 ```
 
-No event lifecycle semantics were added to rendering.
+This makes the boundary more precise and lets a `MessageSink` participate naturally in JSX event bindings when the event type matches. RxJS Subjects remain compatible because they also expose `next`.
 
 ### The initial Component Algebra is deliberately small
 
-M14 introduces four compositional operations in `src/component.ts`.
+The implementation lives in `src/component.ts` and begins with four compositional operations.
 
-`mapModel` changes what model a child component sees:
+#### `mapModel`
+
+`mapModel` lets a component that understands a smaller model participate in a larger model:
 
 ```text
 Component<InnerModel, Message>
@@ -3608,9 +4289,18 @@ Component<InnerModel, Message>
 Component<OuterModel, Message>
 ```
 
-The selector is an ordinary application/domain function. The component combinator only rewires the model boundary.
+The selector is an ordinary pure application/domain function:
 
-`mapMessage` changes the message vocabulary emitted by a child:
+```ts
+const selectTodos = (model: TodosModel): readonly Todo[] =>
+  model.todos;
+```
+
+The combinator only rewires the model boundary. It does not hide domain meaning inside a new component mechanism.
+
+#### `mapMessage`
+
+`mapMessage` lifts a child component's local message vocabulary into the containing application vocabulary:
 
 ```text
 Component<Model, InnerMessage>
@@ -3620,16 +4310,35 @@ Component<Model, InnerMessage>
 Component<Model, OuterMessage>
 ```
 
-`mapMessageWithModel` performs the same lift when constructing the outer message also requires the current model, for example when an item-local edit must be tagged with that item's identity:
+For example:
+
+```text
+SubmitEvent
+    │
+    │ toSubmitTodoMessage
+    ▼
+TodoMessage
+```
+
+Again, the application meaning lives in the named function passed to the combinator.
+
+#### `mapMessageWithModel`
+
+Some outward messages need both the local message and the current model—for example, an item-local edit that must carry the item's id.
 
 ```text
 InnerMessage + Model
         │
+        │ project
         ▼
    OuterMessage
 ```
 
-`list` lifts one item component over a readonly collection while preserving item order:
+`mapMessageWithModel` performs that lift while leaving the component's view unchanged.
+
+#### `list`
+
+`list` lifts one item component over a readonly collection:
 
 ```text
 Component<Item, Message>
@@ -3639,82 +4348,104 @@ Component<Item, Message>
 Component<readonly Item[], Message>
 ```
 
-These combinators compose view structure. They do not introduce time, subscription, scheduling, effects, or hidden state.
+It preserves collection order and renders one child for every item. Collection semantics remain ordinary model/domain data; the combinator does not add state or time.
 
-### The Component Algebra complements the RxJS Operator Algebra
+### Component Algebra and RxJS Operator Algebra are complementary
 
-M14 makes the architectural symmetry explicit:
+M14 makes an important symmetry explicit.
+
+The Component Algebra composes view structure:
 
 ```text
-Component Algebra                     RxJS Operator Algebra
-─────────────────                     ─────────────────────
-Component<A, X>                        Observable<A>
-      │                                     │
-   mapModel                                map
-      │                                     │
-      ▼                                     ▼
-Component<B, X>                        Observable<B>
-
-Component<A, X>                        Observable<A>
-      │                                     │
- mapMessage                              filter / scan / ...
-      │                                     │
-      ▼                                     ▼
-Component<A, Y>                        Observable<...>
+Component<A, X>
+      │
+      │ mapModel
+      ▼
+Component<B, X>
 ```
 
-The two algebras operate on different dimensions:
+The RxJS Operator Algebra composes values moving through time:
 
 ```text
-Component Algebra = view structure
-RxJS Operator Algebra = values moving through time
-Domain functions = application meaning
+Observable<A>
+      │
+      │ map
+      ▼
+Observable<B>
 ```
 
-This gives the framework a compact responsibility model:
+Likewise, `mapMessage` rewires the outward package vocabulary of a component while RxJS operators rewire packages flowing through a dataflow.
+
+They operate on different dimensions:
 
 ```text
-JSX    = View Structure
-Domain = Application Meaning
-RxJS   = Workflow / Dataflow
+Component Algebra   = View Structure
+Domain Functions    = Application Meaning
+RxJS Operator Algebra = Workflow / Dataflow through Time
+```
+
+This gives `rxjs-fullstack` a compact architectural vocabulary:
+
+```text
+JSX    = View
+Domain = Meaning
+RxJS   = Flow
 ```
 
 ### The Todos vertical slice is the executable proof
 
-The Todo list now begins with a component over one domain value:
+The M14 proof deliberately refactors the existing Todos example rather than creating an isolated toy.
+
+One Todo starts as:
 
 ```text
 TodoItem
 Component<Todo, never>
 ```
 
-`list(TodoItem)` lifts it over a collection, and `mapModel(selectTodos)` focuses it from `TodosModel` to `readonly Todo[]`. `TodoList` then adds the `<ul>` JSX structure without changing the model or message vocabulary.
-
-The form demonstrates the opposite boundary. `SubmitTodoForm` locally emits a `SubmitEvent`:
+`list(TodoItem)` lifts that component over `readonly Todo[]`. `mapModel(selectTodos)` then lets the result consume `TodosModel`:
 
 ```text
+Component<Todo, never>
+        │
+        │ list
+        ▼
+Component<readonly Todo[], never>
+        │
+        │ mapModel(selectTodos)
+        ▼
+Component<TodosModel, never>
+```
+
+`TodoList` adds the `<ul>` JSX structure around the composed item views without changing the model/message protocol.
+
+The form proves message composition in the opposite direction.
+
+The primitive form component emits the browser event package:
+
+```text
+SubmitTodoForm
 Component<void, SubmitEvent>
 ```
 
-`mapMessage(toSubmitTodoMessage)` lifts that browser package into the application's `TodoMessage` vocabulary:
+`mapMessage(toSubmitTodoMessage)` lifts that into:
 
 ```text
-SubmitEvent
-    ↓
-toSubmitTodoMessage
-    ↓
-TodoMessage
+TodoForm
+Component<void, TodoMessage>
 ```
 
-The component does not decide what happens next.
+The component still does not execute a Todo creation.
 
-The workflow root creates:
+### RxJS remains the workflow engine
+
+The application root creates the temporal source:
 
 ```ts
 const messages$ = new Subject<TodoMessage>();
 ```
 
-and the existing RxJS pipeline remains visible:
+The RxJS pipeline remains explicit:
 
 ```text
 messages$
@@ -3727,34 +4458,83 @@ tap(preventFormNavigation)
    ↓
 exhaustMap(...)
    ↓
-server action
+createTodo$ server action
    ↓
 concatMap(query invalidation)
 ```
 
-`exhaustMap` still means **ignore while busy**. `concatMap` still sequences invalidation after the write. Query/Cache still owns reads. The server action remains cold/cancellable. M14 does not move any of those temporal policies into the component abstraction.
+Nothing about M14 changes the M07 concurrency semantics:
+
+```text
+exhaustMap = ignore while busy
+```
+
+Nothing changes the read ownership established by M05/M08:
+
+```text
+Query/Cache owns cached server reads
+```
+
+Nothing changes the server-action execution model:
+
+```text
+cold Observable
+subscription starts request
+the Subscription owns cancellation
+```
+
+The Component Algebra describes view structure and emits typed messages. RxJS decides what those messages do over time.
+
+### Domain functions remain visible between the two algebras
+
+M14 follows the same rule already used throughout the project: **do not rename mechanisms merely to give them domain names. Name the domain/application functions used by the mechanism.**
+
+For the Todo form:
+
+```ts
+mapMessage(toSubmitTodoMessage)(SubmitTodoForm)
+```
+
+The combinator stays visible. The application meaning is in `toSubmitTodoMessage`.
+
+For the workflow:
+
+```ts
+messages$.pipe(
+  filter(isSubmitTodoMessage),
+  map((message) => message.event),
+  tap(preventFormNavigation),
+  exhaustMap(...),
+)
+```
+
+The RxJS mechanisms stay visible. Meaning is supplied by ordinary functions and domain packages.
+
+This keeps both algebras inspectable and compositional.
 
 ### Low-level JSX components remain useful
 
-Not every JSX function needs a model/message protocol. Static or infrastructure-oriented functions such as a logo, field fragment, route shell, or resource/workflow composition root can remain:
+M14 does not force every JSX function into a model/message protocol.
+
+A static logo, field fragment, page wrapper, or workflow composition root may still be:
 
 ```text
 JsxComponent<Props>
 ```
 
-Application views that participate in model/message composition use:
+Application views that participate in the model/message algebra use:
 
 ```text
 Component<Model, Message>
 ```
 
-Both return `ViewChild`, so both can appear in the same JSX tree and both use the same renderer.
+Both can appear in the same JSX tree because both produce `ViewChild`.
 
-This means M14 does not force presentational helpers into an artificial application protocol merely to make them renderable.
+The current Todo workflow root remains a `JsxComponent`: it creates the `Subject<TodoMessage>`, Query/Cache streams, and workflow Observables, then connects them to the application components. This makes the boundary visible rather than hiding RxJS resource creation inside every component.
 
-### SSR, SSG, DOM rendering, and streaming do not change
+### Existing renderers do not change
 
-The crucial compatibility invariant is:
+The key compatibility invariant is:
 
 ```text
 JsxComponent<Props> ───────────────┐
@@ -3762,7 +4542,7 @@ JsxComponent<Props> ───────────────┐
 Component<Model, Message> ─────────┘
 ```
 
-Everything after `ViewChild` remains the M01–M13 machinery:
+Everything after `ViewChild` is still the M01–M13 machinery:
 
 ```text
 ViewChild
@@ -3773,7 +4553,9 @@ ViewChild
    └── SSG
 ```
 
-No renderer needs to know whether a `ViewChild` was produced by a generic JSX helper or by the Component Algebra.
+No renderer needs to know whether the view was produced by a generic JSX helper or by the Component Algebra.
+
+This is why M14 can become the default application component model without breaking the framework's rendering stack.
 
 ### M14 source map
 
@@ -3793,7 +4575,7 @@ src/component.ts
   list()
 
 src/examples/todos.tsx
-  TodoItem and TodoList Component composition
+  TodoItem and TodoList component composition
   SubmitTodoForm → TodoMessage composition
   messages$ workflow boundary
   visible RxJS concurrency/effect pipeline
@@ -3806,41 +4588,43 @@ scripts/verify-components.tsx
 
 package.json
   verify:components
-  M14 verifier in the complete check gate
+  M14 verification in the complete check gate
 ```
 
 ### M14 verification
 
-The dedicated component-algebra verifier proves that:
+The dedicated verifier proves that:
 
-- `mapModel` projects an outer model into the child model without changing the message channel,
-- `mapMessage` lifts a local message into an outer vocabulary,
-- `mapMessageWithModel` can construct an outer message from both the local message and current model,
-- `list` renders one child for every collection item and preserves order.
+- `mapModel` projects an outer model into the child model while leaving the message channel intact,
+- `mapMessage` lifts a local message into an outer message vocabulary,
+- `mapMessageWithModel` constructs an outer message from both the local message and current model,
+- `list` produces one child for each model item and preserves order.
 
-The project-wide `bun run check` additionally typechecks the Todos integration and reruns every M01–M13 verifier, SSR/static/runtime build, and browser bundle. This protects the central M14 compatibility claim: the new default application component model must compose with the existing framework rather than replace it.
+The project-wide `bun run check` additionally reruns strict TypeScript, all earlier M01–M13 verifiers, SSR/SSG/runtime builds, and browser bundles.
+
+That project-wide gate is important: M14 is only successful if the new default application component abstraction composes with the existing framework rather than replacing its execution or rendering model.
 
 ### What M14 establishes
 
-M14 adds the missing structural counterpart to the RxJS execution model:
+M14 gives the completed fullstack execution architecture a matching functional view-composition model:
 
 ```text
-                        Domain Values
-                             │
-                 ┌───────────┴───────────┐
-                 ▼                       ▼
-        Component Algebra         RxJS Operator Algebra
-      Component<Model, Msg>         Observable<A>
-                 │                       │
-                 ▼                       ▼
-          View Structure           Workflow / Dataflow
-                 │                       │
-                 └───────────┬───────────┘
-                             ▼
-                        Application
+                         Domain Values
+                              │
+                  ┌───────────┴───────────┐
+                  ▼                       ▼
+         Component Algebra         RxJS Operator Algebra
+      Component<Model, Message>       Observable<A>
+                  │                       │
+                  ▼                       ▼
+           View Structure          Workflow / Dataflow
+                  │                       │
+                  └───────────┬───────────┘
+                              ▼
+                         Application
 ```
 
-The broader principle is: **JSX describes the view, domain functions provide application meaning, and RxJS is the workflow/dataflow engine.**
+The broader M14 principle is: **JSX describes the view, domain functions provide application meaning, and RxJS is the workflow/dataflow engine.**
 
 ## What M01–M14 establish
 
@@ -3875,8 +4659,8 @@ Component<Model, Message>      RxJS Operator Algebra
       ▼                              │
 framework ViewChild                  │
       │                              │
-      ├──────────────────────────────┘
-      ↓
+      └──────────────┬───────────────┘
+                     ▼
 file-discovered rxjs-router tree
       ↓
 request/build route context
@@ -3884,9 +4668,9 @@ request/build route context
       ├── fetch boundary
       └── ResolvedAuthSession | null
       ↓
-route loaders / effects
+route loaders
       ├── Query/Cache reads
-      ├── server actions
+      ├── server actions / domain effects
       ├── repository persistence
       ├── authentication / authorization
       └── optional stream$: Observable<ViewChild>
@@ -3908,10 +4692,26 @@ complete string    Web ReadableStream          complete file
               ┌──────────┼──────────┐
               ▼          ▼          ▼
              Bun       Node.js   fetch-native
-                                  edge runtime
+                         │        edge runtime
+                         ▼
+                @hono/node-server
+
+persistent runtime composition
+      ↓
+shared PGlite/Postgres
+      ├── TodoRepository
+      └── AuthRepository
+
+browser side
+      ↓
+HttpOnly opaque session cookie + CSRF companion cookie
+      ↓
+Query/Cache hydration + Component<Model, Message> + DOM bindings
+      ↓
+RxJS Subscription-owned workflow/dataflow execution
 ```
 
-The original M01–M13 fullstack roadmap remains intact; M14 adds the canonical functional view-composition model on top of that completed execution stack.
+The original M01–M13 implementation roadmap remains intact; M14 adds the canonical functional application-component model on top of that completed fullstack execution stack.
 
 ## Run
 
@@ -3965,7 +4765,7 @@ This builds `dist/client/todos-client.js` and serves it on `http://localhost:310
 bun run verify:components
 ```
 
-This verifies the core `mapModel`, `mapMessage`, `mapMessageWithModel`, and `list` composition laws exercised by the M14 implementation.
+This verifies the core `mapModel`, `mapMessage`, `mapMessageWithModel`, and `list` composition behavior exercised by the M14 implementation.
 
 ### Node.js runtime
 
