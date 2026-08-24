@@ -59,7 +59,7 @@ const ItemValueView: Component<ItemModel, string> = ({ model, messages }) => {
 };
 
 const ItemView: Component<ItemModel, ItemMessage> = mapMessageWithModel(
-  (value, model): ItemMessage => ({ id: model.id, value }),
+  (value: string, model: ItemModel): ItemMessage => ({ id: model.id, value }),
 )(ItemValueView);
 
 const itemMessages: ItemMessage[] = [];
