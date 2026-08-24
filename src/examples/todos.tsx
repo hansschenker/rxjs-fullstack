@@ -62,15 +62,17 @@ const TodoItem: Component<Todo, never> = ({ model: todo }) => (
   </li>
 );
 
-const TodoItems = list(TodoItem);
-
 const selectTodos = (model: TodosModel): readonly Todo[] => model.todos;
+const TodoItems = mapModel(selectTodos)(list(TodoItem));
 
 /**
- * Component algebra: a component over one Todo is lifted to a list and then
- * focused from TodosModel to its todo collection.
+ * Component algebra: one Todo component is lifted to a list and focused from
+ * TodosModel to its todo collection; this component then adds the list's JSX
+ * structure without changing the model or message vocabulary.
  */
-export const TodoList: Component<TodosModel, never> = mapModel(selectTodos)(TodoItems);
+export const TodoList: Component<TodosModel, never> = ({ model, messages }) => (
+  <ul>{TodoItems({ model, messages })}</ul>
+);
 
 export const TodoSnapshot: JsxComponent<{ readonly todos: readonly Todo[] }> = ({ todos }) => (
   <section>

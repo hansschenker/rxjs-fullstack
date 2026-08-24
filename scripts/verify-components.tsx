@@ -1,4 +1,11 @@
-import { list, mapMessage, mapModel, type Component, type MessageSink } from '../src/component';
+import {
+  list,
+  mapMessage,
+  mapMessageWithModel,
+  mapModel,
+  type Component,
+  type MessageSink,
+} from '../src/component';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -34,6 +41,39 @@ assert(rendered === 'RxJS', 'mapModel must project the outer model into the inne
 assert(
   messages.length === 1 && messages[0] === 'length:4',
   'mapMessage must lift the component message into the outer message vocabulary.',
+);
+
+interface ItemModel {
+  readonly id: number;
+  readonly value: string;
+}
+
+interface ItemMessage {
+  readonly id: number;
+  readonly value: string;
+}
+
+const ItemValueView: Component<ItemModel, string> = ({ model, messages }) => {
+  messages.next(model.value);
+  return model.value;
+};
+
+const ItemView: Component<ItemModel, ItemMessage> = mapMessageWithModel(
+  (value, model): ItemMessage => ({ id: model.id, value }),
+)(ItemValueView);
+
+const itemMessages: ItemMessage[] = [];
+const renderedItem = ItemView({
+  model: { id: 7, value: 'seven' },
+  messages: {
+    next: (message) => itemMessages.push(message),
+  },
+});
+
+assert(renderedItem === 'seven', 'mapMessageWithModel must preserve the component view.');
+assert(
+  itemMessages.length === 1 && itemMessages[0]?.id === 7 && itemMessages[0].value === 'seven',
+  'mapMessageWithModel must project messages with the current model.',
 );
 
 const NumberView: Component<number, never> = ({ model }) => model;
