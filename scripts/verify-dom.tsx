@@ -1,9 +1,11 @@
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
 import { Observable, Subject, filter, firstValueFrom } from 'rxjs';
+import type { RouteMatch } from 'rxjs-router';
 
 import { Counter } from '../src/examples/counter';
 import type { ViewChild } from '../src/jsx/runtime';
 import { mount } from '../src/render/dom';
+import { createActivatedRouteTree } from '../src/router-view';
 
 GlobalRegistrator.register({ url: 'http://localhost:3100/' });
 
@@ -342,7 +344,35 @@ assert(selectedOption instanceof HTMLOptionElement, 'M02: the option should rend
 assertEqual(selectedOption.selected, true, 'M02: selected should bind to the option property.');
 optionLifetime.unsubscribe();
 
-// M02/M05: client-side navigation — the router state stream is the live view
+// M14: state.matches[] has a named activated route tree shape for nested outlets.
+const firstMatch = {
+  id: 'root',
+  path: '/',
+  fullPath: '/',
+  pathname: '/',
+  params: {},
+  search: {},
+  data: undefined,
+} satisfies RouteMatch;
+const secondMatch = {
+  ...firstMatch,
+  id: 'about',
+  path: 'about',
+  fullPath: '/about',
+} satisfies RouteMatch;
+const activatedRouteTree = createActivatedRouteTree([firstMatch, secondMatch]);
+assertEqual(
+  activatedRouteTree.root?.match.id,
+  'root',
+  'M14: ActivatedRouteTree should expose the root match.',
+);
+assertEqual(
+  activatedRouteTree.root?.child?.match.id,
+  'about',
+  'M14: ActivatedRouteTree should link parent and child route nodes.',
+);
+
+// M02/M05/M14: client-side navigation — RouterOutlet is the named live view
 // source, and nav link clicks flow through the dataflow into the router.
 const shell = createTodosShell();
 const shellContainer = document.createElement('div');
@@ -353,7 +383,7 @@ await firstValueFrom(shell.router.state$.pipe(filter((state) => state.status ===
 assertEqual(
   shellContainer.querySelector('h1')?.textContent,
   'RxJS Fullstack',
-  'Navigation: the shell should render the home route from the initial location.',
+  'M14: RouterOutlet should render the home route from the initial location.',
 );
 
 const aboutLink = Array.from(shellContainer.querySelectorAll('a')).find(
@@ -370,7 +400,7 @@ await firstValueFrom(
 assertEqual(
   shellContainer.querySelector('h1')?.textContent,
   'About RxJS Fullstack',
-  'Navigation: clicking a nav link should swap the routed view client-side.',
+  'M14: clicking a nav link should swap the RouterOutlet view client-side.',
 );
 assertEqual(
   document.title,
@@ -379,6 +409,6 @@ assertEqual(
 );
 
 shellLifetime.unsubscribe();
-assertEqual(shellContainer.innerHTML, '', 'Navigation: unmounting the shell must clear its DOM.');
+assertEqual(shellContainer.innerHTML, '', 'M14: unmounting the RouterOutlet shell must clear its DOM.');
 
 console.log('M02 DOM renderer verification passed.');

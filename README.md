@@ -36,6 +36,7 @@ M10  Runtime Adapters                             ✅
 M11  Database Integration                         ✅
 M12  Authentication                               ✅
 M13  Streaming / Advanced SSR                     ✅
+M14  Router View Runtime                          ✅
 ```
 
 ## M01 — TypeScript JSX runtime
@@ -4188,7 +4189,84 @@ ordered HTML chunks over a Web ReadableStream
 
 That is the larger M13 result: **RxJS can own temporal server rendering while the renderer remains pure and the Web platform owns transport.**
 
-## What M01–M13 establish
+## M14 — Router View Runtime
+
+M14 names and formalizes the browser route-view patterns that already existed in the Todos shell.
+
+Before M14, the shell derived a local `page$` from `router.state$`, selected the leaf match's `PageData.view`, updated `document.title`, and let the DOM renderer interpret the resulting live `ViewChild` region. The architecture was already correct, but the vocabulary was still local to one example.
+
+M14 makes the route-view boundary explicit:
+
+```text
+rxjs-router
+      ↓
+RouterState / matches[]
+      ↓
+RouterOutlet
+      ↓
+RouteComponentOutput.view
+      ↓
+ViewChild / Observable<ViewChild>
+      ↓
+DOM renderer mount Subscription
+```
+
+### Naming scheme
+
+```text
+page$                 → RouterOutlet
+PageData              → RouteComponentOutput
+loader context         → RouteViewContext
+state.matches[]        → ActivatedRouteTree
+mount() Subscription   → RouteComponentLifecycle
+```
+
+`RouterOutlet` is now the canonical client route-view primitive. It renders the deepest successful match by default, preserving the previous `page$` behavior, and it accepts `depth` for nested outlet activation:
+
+```tsx
+<RouterOutlet router={router} />
+<RouterOutlet router={router} depth={1} />
+```
+
+`RouteComponentOutput` is the route-rendered output contract. `PageData` remains a backward-compatible alias so existing route loaders continue to work unchanged:
+
+```ts
+interface RouteComponentOutput {
+  readonly title: string;
+  readonly view: ViewChild;
+  readonly stream$?: Observable<ViewChild>;
+}
+```
+
+`ActivatedRouteTree` is the named parent-to-child structure over `state.matches[]`. It does not change `rxjs-router`; it gives the fullstack runtime a clearer language for nested layouts and outlet depth.
+
+`RouteViewContext` is the component-facing context for future route components. It exposes `params$`, `search$`, `data$`, `location$`, `hash$`, `match$`, `matches$`, `destroy$`, and `child()` as explicit streams/helpers while leaving loader execution in `rxjs-router`.
+
+`RouteComponentLifecycle` gives route activation a name for the Subscription-owned lifetime already established by `mount()`. A route activation can provide `destroy$` to local component streams and tear everything down by unsubscribing once.
+
+### M14 source map
+
+```text
+src/router-view/output.ts
+  RouteComponentOutput / PageData alias
+
+src/router-view/outlet.tsx
+  RouterOutlet / Outlet alias / createRouterOutletView$()
+
+src/router-view/activation-tree.ts
+  ActivatedRouteTree over state.matches[]
+
+src/router-view/context.ts
+  RouteViewContext stream helpers
+
+src/router-view/lifecycle.ts
+  RouteComponentLifecycle
+
+src/examples/todos-shell.tsx
+  page$ replaced by <RouterOutlet router={router} />
+```
+
+## What M01–M14 establish
 
 ```text
 M01  JSX is a typed description of a view.
@@ -4204,6 +4282,7 @@ M10  Multiple runtimes host the same Web Request → Response application.
 M11  Persistent database effects enter through injected RxJS repository ports.
 M12  Server-side identity and sessions control route access without a client auth machine.
 M13  RxJS server values can be delivered progressively without changing the pure renderer.
+M14  RouterOutlet names the browser route-view runtime over rxjs-router matches.
 ```
 
 The completed architecture is:
@@ -4263,7 +4342,7 @@ Query/Cache hydration + DOM bindings + application form/action dataflows
 RxJS Subscription-owned execution
 ```
 
-The original M01–M13 implementation roadmap is now complete.
+The original M01–M14 implementation roadmap is now complete.
 
 ## Run
 

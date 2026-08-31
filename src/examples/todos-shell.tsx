@@ -3,7 +3,8 @@ import type { Observable } from 'rxjs';
 import { createBrowserHistory, createRouter, type RxRouter } from 'rxjs-router';
 
 import type { ViewChild } from '../jsx/runtime';
-import { routes, type AppRoutes, type PageData } from '../routes';
+import { routes, type AppRoutes } from '../routes';
+import { RouterOutlet } from '../router-view';
 
 export interface TodosShell {
   readonly view: ViewChild;
@@ -41,31 +42,6 @@ export const createTodosShell = (): TodosShell => {
     concatMap((href) => from(router.navigateHref(href))),
   );
 
-  const page$ = router.state$.pipe(
-    tap((state) => {
-      const page = state.matches.at(-1)?.data as PageData | undefined;
-      if (page) {
-        document.title = page.title;
-      }
-    }),
-    map((state): ViewChild => {
-      if (state.status === 'pending') {
-        return <p>Loading...</p>;
-      }
-
-      if (state.status === 'notFound') {
-        return <h1>Not found</h1>;
-      }
-
-      if (state.status === 'error') {
-        return <h1>Something went wrong</h1>;
-      }
-
-      const page = state.matches.at(-1)?.data as PageData | undefined;
-      return page?.view ?? null;
-    }),
-  );
-
   const NavLink = ({ href, label }: { readonly href: string; readonly label: string }) => (
     <a href={href} on={{ click: navClick$ }}>
       {label}
@@ -79,7 +55,7 @@ export const createTodosShell = (): TodosShell => {
         <NavLink href="/counter" label="Counter" /> <NavLink href="/todos" label="Todos" />{' '}
         <NavLink href="/hello/RxJS" label="Hello" />
       </nav>
-      {page$}
+      <RouterOutlet router={router} />
     </div>
   );
 
