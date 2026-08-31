@@ -65,9 +65,9 @@ export const createRouteViewContext = <
     params$: match$.pipe(map((match) => match.params)),
     search$: match$.pipe(map((match) => match.search)),
     data$: match$.pipe(map((match) => match.data)),
-    location$: router.location$.pipe(
-      shareReplay({ bufferSize: 1, refCount: true }),
-    ) as Observable<ParsedLocation<TMatch['search']>>,
+    location$: router.location$.pipe(shareReplay({ bufferSize: 1, refCount: true })) as Observable<
+      ParsedLocation<TMatch['search']>
+    >,
     hash$: router.location$.pipe(map((location) => location.hash)),
     destroy$: lifecycle.destroy$,
     ...(parent ? { parent } : {}),

@@ -409,6 +409,10 @@ assertEqual(
 );
 
 shellLifetime.unsubscribe();
-assertEqual(shellContainer.innerHTML, '', 'M14: unmounting the RouterOutlet shell must clear its DOM.');
+assertEqual(
+  shellContainer.innerHTML,
+  '',
+  'M14: unmounting the RouterOutlet shell must clear its DOM.',
+);
 
 console.log('M02 DOM renderer verification passed.');
