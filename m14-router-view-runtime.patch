@@ -1,0 +1,576 @@
+diff --git a/src/router-view/output.ts b/src/router-view/output.ts
+new file mode 100644
+index 0000000..3f2d4aa
+--- /dev/null
++++ b/src/router-view/output.ts
+@@ -0,0 +1,27 @@
++import type { Observable } from 'rxjs';
++
++import type { ViewChild } from '../jsx/runtime';
++
++/**
++ * The framework-owned view output produced by a matched route.
++ *
++ * M14 gives the existing PageData contract its route-runtime name: this is the
++ * output consumed by RouterOutlet and eventually interpreted by the DOM/HTML
++ * renderers.
++ */
++export interface RouteComponentOutput {
++  readonly title: string;
++  readonly view: ViewChild;
++  readonly stream$?: Observable<ViewChild>;
++}
++
++/** Backward-compatible name used by existing route loaders. */
++export type PageData = RouteComponentOutput;
++
++export const isRouteComponentOutput = (value: unknown): value is RouteComponentOutput => {
++  if (typeof value !== 'object' || value === null) {
++    return false;
++  }
++
++  const candidate = value as { readonly title?: unknown };
++  return typeof candidate.title === 'string' && 'view' in value;
++};
++
++export const routeComponentOutputFrom = (value: unknown): RouteComponentOutput | undefined =>
++  isRouteComponentOutput(value) ? value : undefined;
+diff --git a/src/router-view/activation-tree.ts b/src/router-view/activation-tree.ts
+new file mode 100644
+index 0000000..fbb10f0
+--- /dev/null
++++ b/src/router-view/activation-tree.ts
+@@ -0,0 +1,41 @@
++import type { RouteMatch } from 'rxjs-router';
++
++/** One activated level of the matched route branch. */
++export interface ActivatedRouteNode<TMatch extends RouteMatch = RouteMatch> {
++  readonly depth: number;
++  readonly match: TMatch;
++  readonly parent?: ActivatedRouteNode<TMatch>;
++  readonly child?: ActivatedRouteNode<TMatch>;
++}
++
++/**
++ * A named structure over router.state.matches[].
++ *
++ * M14 keeps rxjs-router's flat ordered matches array intact, but names the
++ * parent-to-child activation structure that RouterOutlet consumes.
++ */
++export interface ActivatedRouteTree<TMatch extends RouteMatch = RouteMatch> {
++  readonly root?: ActivatedRouteNode<TMatch>;
++  readonly leaf?: ActivatedRouteNode<TMatch>;
++  readonly branch: readonly ActivatedRouteNode<TMatch>[];
++}
++
++type MutableActivatedRouteNode<TMatch extends RouteMatch> = {
++  depth: number;
++  match: TMatch;
++  parent?: MutableActivatedRouteNode<TMatch>;
++  child?: MutableActivatedRouteNode<TMatch>;
++};
++
++export const createActivatedRouteTree = <TMatch extends RouteMatch>(
++  matches: readonly TMatch[],
++): ActivatedRouteTree<TMatch> => {
++  const branch: Array<MutableActivatedRouteNode<TMatch>> = matches.map((match, depth) => ({
++    depth,
++    match,
++  }));
++
++  branch.forEach((node, index) => {
++    node.parent = branch[index - 1];
++    node.child = branch[index + 1];
++  });
++
++  return {
++    root: branch[0],
++    leaf: branch.at(-1),
++    branch,
++  };
++};
+diff --git a/src/router-view/lifecycle.ts b/src/router-view/lifecycle.ts
+new file mode 100644
+index 0000000..a67785c
+--- /dev/null
++++ b/src/router-view/lifecycle.ts
+@@ -0,0 +1,32 @@
++import { Subject, Subscription, type Observable, type TeardownLogic } from 'rxjs';
++
++/**
++ * Route-level name for the Subscription-owned mount lifetime.
++ *
++ * The DOM renderer already treats Subscription as the lifetime owner. M14 gives
++ * the same idea a router-view name so route components can receive destroy$ and
++ * outlets can compose teardown explicitly.
++ */
++export interface RouteComponentLifecycle {
++  readonly destroy$: Observable<void>;
++  readonly subscription: Subscription;
++  readonly add: (teardown: TeardownLogic) => void;
++  readonly destroy: () => void;
++}
++
++export const createRouteComponentLifecycle = (): RouteComponentLifecycle => {
++  const destroySubject = new Subject<void>();
++  const subscription = new Subscription(() => {
++    destroySubject.next();
++    destroySubject.complete();
++  });
++
++  return {
++    destroy$: destroySubject.asObservable(),
++    subscription,
++    add(teardown) {
++      subscription.add(teardown);
++    },
++    destroy() {
++      subscription.unsubscribe();
++    },
++  };
++};
+diff --git a/src/router-view/context.ts b/src/router-view/context.ts
+new file mode 100644
+index 0000000..fe25186
+--- /dev/null
++++ b/src/router-view/context.ts
+@@ -0,0 +1,79 @@
++import { distinctUntilChanged, filter, map, shareReplay, type Observable } from 'rxjs';
++import type { AnyRoute, ParsedLocation, RouteMatch, RxRouter } from 'rxjs-router';
++
++import type { ViewChild } from '../jsx/runtime';
++import type { RouteComponentLifecycle } from './lifecycle';
++
++const isDefined = <TValue>(value: TValue | undefined): value is TValue => value !== undefined;
++
++/**
++ * Component-facing route context.
++ *
++ * Loaders keep their existing rxjs-router execution context. Route views get a
++ * stream-oriented context owned by RouterOutlet.
++ */
++export interface RouteViewContext<
++  TMatch extends RouteMatch = RouteMatch,
++  TRouter extends RxRouter<any, any> = RxRouter<any, any>,
++> {
++  readonly router: TRouter;
++  readonly depth: number;
++  readonly match$: Observable<TMatch>;
++  readonly matches$: Observable<readonly TMatch[]>;
++  readonly params$: Observable<TMatch['params']>;
++  readonly search$: Observable<TMatch['search']>;
++  readonly data$: Observable<TMatch['data']>;
++  readonly location$: Observable<ParsedLocation<TMatch['search']>>;
++  readonly hash$: Observable<string>;
++  readonly destroy$: Observable<void>;
++  readonly parent?: RouteViewContext<RouteMatch, TRouter>;
++  readonly child: () => ViewChild;
++}
++
++export interface CreateRouteViewContextOptions<
++  TRouter extends RxRouter<any, any>,
++  TMatch extends RouteMatch = RouteMatch,
++> {
++  readonly router: TRouter;
++  readonly depth: number;
++  readonly lifecycle: RouteComponentLifecycle;
++  readonly parent?: RouteViewContext<RouteMatch, TRouter>;
++  readonly child?: () => ViewChild;
++}
++
++export const createRouteViewContext = <
++  TRouter extends RxRouter<any, any>,
++  TMatch extends RouteMatch = RouteMatch,
++>({
++  router,
++  depth,
++  lifecycle,
++  parent,
++  child = () => null,
++}: CreateRouteViewContextOptions<TRouter, TMatch>): RouteViewContext<TMatch, TRouter> => {
++  const match$ = router.matches$.pipe(
++    map((matches) => matches[depth] as TMatch | undefined),
++    filter(isDefined),
++    distinctUntilChanged(
++      (previous, next) => previous.id === next.id && previous.pathname === next.pathname,
++    ),
++    shareReplay({ bufferSize: 1, refCount: true }),
++  );
++
++  return {
++    router,
++    depth,
++    match$,
++    matches$: router.matches$ as Observable<readonly TMatch[]>,
++    params$: match$.pipe(map((match) => match.params)),
++    search$: match$.pipe(map((match) => match.search)),
++    data$: match$.pipe(map((match) => match.data)),
++    location$: router.location$.pipe(
++      shareReplay({ bufferSize: 1, refCount: true }),
++    ) as Observable<ParsedLocation<TMatch['search']>>,
++    hash$: router.location$.pipe(map((location) => location.hash)),
++    destroy$: lifecycle.destroy$,
++    parent,
++    child,
++  };
++};
+diff --git a/src/router-view/outlet.tsx b/src/router-view/outlet.tsx
+new file mode 100644
+index 0000000..7eb16f5
+--- /dev/null
++++ b/src/router-view/outlet.tsx
+@@ -0,0 +1,91 @@
++import { map, tap, type Observable } from 'rxjs';
++import type { AnyRoute, RouteMatch, RouterState, RxRouter } from 'rxjs-router';
++
++import type { ViewChild } from '../jsx/runtime';
++import {
++  routeComponentOutputFrom,
++  type RouteComponentOutput,
++} from './output';
++
++export type RouterOutletDepth = number | 'leaf';
++
++export interface RouterOutletProps<TRoutes extends readonly AnyRoute[] = readonly AnyRoute[]> {
++  readonly router: RxRouter<TRoutes>;
++  /**
++   * Which depth of the active branch to render.
++   *
++   * - 'leaf' renders the deepest matched route and preserves the old page$
++   *   behavior.
++   * - 0, 1, 2... render a specific outlet depth for nested layouts.
++   */
++  readonly depth?: RouterOutletDepth;
++  readonly pending?: ViewChild;
++  readonly notFound?: ViewChild;
++  readonly error?: (error: unknown) => ViewChild;
++  readonly empty?: ViewChild;
++  /**
++   * By default, RouterOutlet mirrors the old page$ title side effect in browser
++   * shells. Pass false when a caller wants to manage document.title itself.
++   */
++  readonly documentTitle?: boolean | ((output: RouteComponentOutput) => string | undefined);
++}
++
++export type CreateRouterOutletViewOptions<
++  TRoutes extends readonly AnyRoute[] = readonly AnyRoute[],
++> = RouterOutletProps<TRoutes>;
++
++const selectMatch = (
++  matches: readonly RouteMatch[],
++  depth: RouterOutletDepth,
++): RouteMatch | undefined => (depth === 'leaf' ? matches.at(-1) : matches[depth]);
++
++const routeOutputForState = (
++  state: RouterState<RouteMatch>,
++  depth: RouterOutletDepth,
++): RouteComponentOutput | undefined => routeComponentOutputFrom(selectMatch(state.matches, depth)?.data);
++
++export const createRouterOutletView$ = <TRoutes extends readonly AnyRoute[]>({
++  router,
++  depth = 'leaf',
++  pending = <p>Loading...</p>,
++  notFound = <h1>Not found</h1>,
++  error = () => <h1>Something went wrong</h1>,
++  empty = null,
++  documentTitle = true,
++}: CreateRouterOutletViewOptions<TRoutes>): Observable<ViewChild> => {
++  return router.state$.pipe(
++    tap((state) => {
++      if (documentTitle === false || state.status !== 'success' || typeof document === 'undefined') {
++        return;
++      }
++
++      const output = routeOutputForState(state as RouterState<RouteMatch>, depth);
++      if (!output) {
++        return;
++      }
++
++      const title = typeof documentTitle === 'function' ? documentTitle(output) : output.title;
++      if (title) {
++        document.title = title;
++      }
++    }),
++    map((state): ViewChild => {
++      if (state.status === 'pending') {
++        return pending;
++      }
++
++      if (state.status === 'notFound') {
++        return notFound;
++      }
++
++      if (state.status === 'error') {
++        return error(state.error);
++      }
++
++      const output = routeOutputForState(state as RouterState<RouteMatch>, depth);
++      return output?.view ?? empty;
++    }),
++  );
++};
++
++export function RouterOutlet<TRoutes extends readonly AnyRoute[]>(
++  props: RouterOutletProps<TRoutes>,
++): ViewChild {
++  return createRouterOutletView$(props);
++}
++
++/** Short alias for users coming from TanStack Router / React Router vocabulary. */
++export const Outlet = RouterOutlet;
+diff --git a/src/router-view/index.ts b/src/router-view/index.ts
+new file mode 100644
+index 0000000..f1b54d2
+--- /dev/null
++++ b/src/router-view/index.ts
+@@ -0,0 +1,6 @@
++export * from './activation-tree';
++export * from './context';
++export * from './lifecycle';
++export * from './outlet';
++export * from './output';
+diff --git a/src/routes/types.ts b/src/routes/types.ts
+index 1d6d827..8eb54d8 100644
+--- a/src/routes/types.ts
++++ b/src/routes/types.ts
+@@ -1,8 +1 @@
+-import type { Observable } from 'rxjs';
+-
+-import type { ViewChild } from '../jsx/runtime';
+-
+-export interface PageData {
+-  readonly title: string;
+-  readonly view: ViewChild;
+-  readonly stream$?: Observable<ViewChild>;
+-}
++export type { PageData, RouteComponentOutput } from '../router-view/output';
+diff --git a/src/routes.tsx b/src/routes.tsx
+index 513ac2b..f030a92 100644
+--- a/src/routes.tsx
++++ b/src/routes.tsx
+@@ -1,6 +1,8 @@
+ import { routes } from './routes.generated';
+ 
+ export { generatedRouteFiles, routes } from './routes.generated';
+-export type { PageData } from './routes/types';
++export { Outlet, RouterOutlet, createRouterOutletView$ } from './router-view';
++export type { ActivatedRouteNode, ActivatedRouteTree, PageData, RouteComponentLifecycle, RouteComponentOutput, RouteViewContext } from './router-view';
++export { createActivatedRouteTree, createRouteComponentLifecycle, createRouteViewContext } from './router-view';
+ 
+ export type AppRoutes = typeof routes;
+diff --git a/src/examples/todos-shell.tsx b/src/examples/todos-shell.tsx
+index 550707d..8c82f8e 100644
+--- a/src/examples/todos-shell.tsx
++++ b/src/examples/todos-shell.tsx
+@@ -2,7 +2,8 @@ import { Subject, concatMap, filter, from, map, tap } from 'rxjs';
+ import type { Observable } from 'rxjs';
+ import { createBrowserHistory, createRouter, type RxRouter } from 'rxjs-router';
+ 
+ import type { ViewChild } from '../jsx/runtime';
+-import { routes, type AppRoutes, type PageData } from '../routes';
++import { routes, type AppRoutes } from '../routes';
++import { RouterOutlet } from '../router-view';
+ export interface TodosShell {
+   readonly view: ViewChild;
+   /**
+@@ -36,28 +37,6 @@ export const createTodosShell = (): TodosShell => {
+     filter((href): href is string => typeof href === 'string'),
+     concatMap((href) => from(router.navigateHref(href))),
+   );
+-  const page$ = router.state$.pipe(
+-    tap((state) => {
+-      const page = state.matches.at(-1)?.data as PageData | undefined;
+-      if (page) {
+-        document.title = page.title;
+-      }
+-    }),
+-    map((state): ViewChild => {
+-      if (state.status === 'pending') {
+-        return <p>Loading...</p>;
+-      }
+-
+-      if (state.status === 'notFound') {
+-        return <h1>Not found</h1>;
+-      }
+-
+-      if (state.status === 'error') {
+-        return <h1>Something went wrong</h1>;
+-      }
+-      const page = state.matches.at(-1)?.data as PageData | undefined;
+-      return page?.view ?? null;
+-    }),
+-  );
+ 
+   const NavLink = ({ href, label }: { readonly href: string; readonly label: string }) => (
+     <a href={href} on={{ click: navClick$ }}>
+@@ -72,7 +51,7 @@ export const createTodosShell = (): TodosShell => {
+         <NavLink href="/counter" label="Counter" /> <NavLink href="/todos" label="Todos" />{' '}
+         <NavLink href="/hello/RxJS" label="Hello" />
+       </nav>
+-      {page$}
++      <RouterOutlet router={router} />
+     </div>
+   );
+ 
+diff --git a/scripts/verify-dom.tsx b/scripts/verify-dom.tsx
+index 2c5c4cb..0d03470 100644
+--- a/scripts/verify-dom.tsx
++++ b/scripts/verify-dom.tsx
+@@ -1,11 +1,12 @@
+ import { GlobalRegistrator } from '@happy-dom/global-registrator';
+ import { Observable, Subject, filter, firstValueFrom } from 'rxjs';
++import type { RouteMatch } from 'rxjs-router';
+ 
+ import { Counter } from '../src/examples/counter';
+ import type { ViewChild } from '../src/jsx/runtime';
+ import { mount } from '../src/render/dom';
++import { createActivatedRouteTree } from '../src/router-view';
+ 
+ GlobalRegistrator.register({ url: 'http://localhost:3100/' });
+@@ -318,8 +319,29 @@ assert(selectedOption instanceof HTMLOptionElement, 'M02: the option should rend
+ assertEqual(selectedOption.selected, true, 'M02: selected should bind to the option property.');
+ optionLifetime.unsubscribe();
+-// M02/M05: client-side navigation — the router state stream is the live view
+-// source, and nav link clicks flow through the dataflow into the router.
++// M14: state.matches[] has a named activated route tree shape for nested outlets.
++const firstMatch = {
++  id: 'root',
++  path: '/',
++  fullPath: '/',
++  pathname: '/',
++  params: {},
++  search: {},
++  data: undefined,
++} satisfies RouteMatch;
++const secondMatch = { ...firstMatch, id: 'about', path: 'about', fullPath: '/about' } satisfies RouteMatch;
++const activatedRouteTree = createActivatedRouteTree([firstMatch, secondMatch]);
++assertEqual(
++  activatedRouteTree.root?.match.id,
++  'root',
++  'M14: ActivatedRouteTree should expose the root match.',
++);
++assertEqual(
++  activatedRouteTree.root?.child?.match.id,
++  'about',
++  'M14: ActivatedRouteTree should link parent and child route nodes.',
++);
++// M02/M05/M14: client-side navigation — RouterOutlet is the named live view
++// source, and nav link clicks flow through the dataflow into the router.
+ const shell = createTodosShell();
+ const shellContainer = document.createElement('div');
+ const shellLifetime = mount(shell.view, shellContainer);
+@@ -328,7 +350,7 @@ await firstValueFrom(shell.router.state$.pipe(filter((state) => state.status ===
+ assertEqual(
+   shellContainer.querySelector('h1')?.textContent,
+   'RxJS Fullstack',
+-  'Navigation: the shell should render the home route from the initial location.',
++  'M14: RouterOutlet should render the home route from the initial location.',
+ );
+ const aboutLink = Array.from(shellContainer.querySelectorAll('a')).find(
+   (anchor) => anchor.getAttribute('href') === '/about',
+@@ -343,7 +365,7 @@ await firstValueFrom(
+ assertEqual(
+   shellContainer.querySelector('h1')?.textContent,
+   'About RxJS Fullstack',
+-  'Navigation: clicking a nav link should swap the routed view client-side.',
++  'M14: clicking a nav link should swap the RouterOutlet view client-side.',
+ );
+ assertEqual(
+   document.title,
+@@ -351,7 +373,7 @@ assertEqual(
+   'Navigation: the page title should follow the route.',
+ );
+ shellLifetime.unsubscribe();
+-assertEqual(shellContainer.innerHTML, '', 'Navigation: unmounting the shell must clear its DOM.');
++assertEqual(shellContainer.innerHTML, '', 'M14: unmounting the RouterOutlet shell must clear its DOM.');
+ 
+ console.log('M02 DOM renderer verification passed.');
+diff --git a/README.md b/README.md
+index 8e59be0..6df9821 100644
+--- a/README.md
++++ b/README.md
+@@ -198,6 +198,7 @@ The central rule is: RxJS is the application machine; the surrounding technologi
+     M11  Database Integration                         ✅
+     M12  Authentication                               ✅
+     M13  Streaming / Advanced SSR                     ✅
++    M14  Router View Runtime                          ✅
+     `
+@@ -3769,6 +3770,62 @@ Only the delivery policy changes:
+     ordered HTML chunks over a Web ReadableStream
+     `
+ That is the larger M13 result: RxJS can own temporal server rendering while the renderer remains pure and the Web platform owns transport.
++## M14 — Router View Runtime
++
++M14 names and formalizes the browser route-view patterns that already existed in the Todos shell.
++
++Before M14, the shell derived a local `page$` from `router.state$`, selected the leaf match's `PageData.view`, updated `document.title`, and let the DOM renderer interpret the resulting live `ViewChild` region. The architecture was already correct, but the vocabulary was still local to one example.
++
++M14 makes the route-view boundary explicit:
++
++    `rxjs-router
++          ↓
++    RouterState / matches[]
++          ↓
++    RouterOutlet
++          ↓
++    RouteComponentOutput.view
++          ↓
++    ViewChild / Observable<ViewChild>
++          ↓
++    DOM renderer mount Subscription
++    `
++
++### Naming scheme
++
++    `page$                 → RouterOutlet
++    PageData              → RouteComponentOutput
++    loader context         → RouteViewContext
++    state.matches[]        → ActivatedRouteTree
++    mount() Subscription   → RouteComponentLifecycle
++    `
++
++`RouterOutlet` is now the canonical client route-view primitive. It renders the deepest successful match by default, preserving the previous `page$` behavior, and it accepts `depth` for nested outlet activation:
++
++    `<RouterOutlet router={router} />
++    <RouterOutlet router={router} depth={1} />
++    `
++
++`RouteComponentOutput` is the route-rendered output contract. `PageData` remains a backward-compatible alias so existing route loaders continue to work unchanged:
++
++    `interface RouteComponentOutput {
++      readonly title: string;
++      readonly view: ViewChild;
++      readonly stream$?: Observable<ViewChild>;
++    }
++    `
++
++`ActivatedRouteTree` is the named parent-to-child structure over `state.matches[]`. It does not change `rxjs-router`; it gives the fullstack runtime a clearer language for nested layouts and outlet depth.
++
++`RouteViewContext` is the component-facing context for future route components. It exposes `params$`, `search$`, `data$`, `location$`, `hash$`, `match$`, `matches$`, `destroy$`, and `child()` as explicit streams/helpers while leaving loader execution in `rxjs-router`.
++
++`RouteComponentLifecycle` gives route activation a name for the Subscription-owned lifetime already established by `mount()`. A route activation can provide `destroy$` to local component streams and tear everything down by unsubscribing once.
++
++### M14 source map
++
++    `src/router-view/output.ts
++      RouteComponentOutput / PageData alias
++
++    src/router-view/outlet.tsx
++      RouterOutlet / Outlet alias / createRouterOutletView$()
++
++    src/router-view/activation-tree.ts
++      ActivatedRouteTree over state.matches[]
++
++    src/router-view/context.ts
++      RouteViewContext stream helpers
++
++    src/router-view/lifecycle.ts
++      RouteComponentLifecycle
++
++    src/examples/todos-shell.tsx
++      page$ replaced by <RouterOutlet router={router} />
++    `
++
+ ## What M01–M14 establish
+ 
+     `M01  JSX is a typed description of a view.
